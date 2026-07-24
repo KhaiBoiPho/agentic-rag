@@ -1,0 +1,70 @@
+syntax = "proto3";
+
+package agentic.research;
+
+option py_generic_services = false;
+
+// ─── Messages ───────────────────────────────────────────────────────────────
+
+message ResearchRequest {
+  string query          = 1;
+  string user_id        = 2;
+  string conversation_id = 3;
+  ResearchConfig config  = 4;
+}
+
+message ResearchConfig {
+  int32 max_iterations      = 1;
+  int32 max_search_results  = 2;
+  float quality_threshold   = 3;
+}
+
+message ResearchStreamChunk {
+  string node        = 1;   // current LangGraph node name
+  NodeStatus status  = 2;
+  string content     = 3;   // partial text or JSON
+  float  progress    = 4;   // 0.0 → 1.0
+  repeated SearchResult sources = 5;
+  string error       = 6;
+  bool   done        = 7;
+  int32  iteration   = 8;
+}
+
+enum NodeStatus {
+  STARTED   = 0;
+  RUNNING   = 1;
+  COMPLETED = 2;
+  FAILED    = 3;
+}
+
+message SearchResult {
+  string url     = 1;
+  string title   = 2;
+  string snippet = 3;
+}
+
+message ResearchHistoryRequest {
+  string user_id = 1;
+  int32  limit   = 2;
+  int32  offset  = 3;
+}
+
+message ResearchHistoryResponse {
+  repeated ResearchRecord records = 1;
+  int32 total = 2;
+}
+
+message ResearchRecord {
+  string id         = 1;
+  string query      = 2;
+  string summary    = 3;
+  int64  created_at = 4;
+}
+
+// ─── Service ────────────────────────────────────────────────────────────────
+
+service ResearchService {
+  // Server-streaming: emits node-by-node progress + final answer
+  rpc DeepResearch(ResearchRequest) returns (stream ResearchStreamChunk);
+  rpc GetHistory(ResearchHistoryRequest) returns (ResearchHistoryResponse);
+}

@@ -1,0 +1,98 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  overflow: hidden;
+  height: 100%;
+}
+
+#__next,
+body > div:first-child {
+  height: 100%;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(203 213 225) transparent;
+}
+
+.dark * {
+  scrollbar-color: rgb(71 85 105) transparent;
+}
+
+.markdown-body p {
+  margin: 0.5em 0;
+}
+.markdown-body p:first-child {
+  margin-top: 0;
+}
+.markdown-body p:last-child {
+  margin-bottom: 0;
+}
+.markdown-body ul,
+.markdown-body ol {
+  margin: 0.5em 0;
+  padding-left: 1.4em;
+}
+.markdown-body li {
+  margin: 0.2em 0;
+}
+.markdown-body pre {
+  background: rgb(15 23 42);
+  color: rgb(226 232 240);
+  padding: 0.75em 1em;
+  border-radius: 0.5em;
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+.markdown-body code {
+  background: rgba(148, 163, 184, 0.2);
+  padding: 0.1em 0.35em;
+  border-radius: 0.3em;
+  font-size: 0.9em;
+}
+.markdown-body pre code {
+  background: none;
+  padding: 0;
+}
+.markdown-body table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  width: 100%;
+}
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  padding: 0.35em 0.6em;
+  text-align: left;
+}
+.markdown-body a {
+  color: rgb(37 99 235);
+  text-decoration: underline;
+}
+.dark .markdown-body a {
+  color: rgb(96 165 250);
+}
+
+.cite-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.1em;
+  height: 1.1em;
+  padding: 0 0.3em;
+  font-size: 0.65em;
+  font-weight: 600;
+  border-radius: 999px;
+  background: rgb(219 234 254);
+  color: rgb(29 78 216);
+  vertical-align: super;
+  text-decoration: none;
+  margin: 0 0.05em;
+}
+.dark .cite-badge {
+  background: rgba(59, 130, 246, 0.25);
+  color: rgb(147 197 253);
+}

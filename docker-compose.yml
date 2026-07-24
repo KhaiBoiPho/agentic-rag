@@ -1,0 +1,197 @@
+services:
+
+  # ─── Migrate (one-shot, runs before app) ───────────────────────────────────
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agentic-migrate
+    command: alembic upgrade head
+    environment:
+      DATABASE_URL: postgresql+asyncpg://agentic:agentic_secret@postgres:5432/agentic_rag
+      QDRANT_HOST: qdrant
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    networks:
+      - agentic-net
+    restart: "no"
+
+  # ─── Frontend (Next.js) ─────────────────────────────────────────────────────
+  ui:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        API_PROXY_TARGET: http://app:8000   # also needed at build time — see Dockerfile
+    container_name: agentic-ui
+    restart: unless-stopped
+    environment:
+      API_PROXY_TARGET: http://app:8000
+    ports:
+      - "3210:3210"
+    depends_on:
+      - app
+    networks:
+      - agentic-net
+
+  # ─── Application ───────────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agentic-rag-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+      - "50051:50051"
+    environment:
+      APP_ENV: development
+      APP_DEBUG: "true"
+      DATABASE_URL: postgresql+asyncpg://agentic:agentic_secret@postgres:5432/agentic_rag
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: "6333"
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      PYTHONUNBUFFERED: "1"   # without this, stdout is block-buffered when not a TTY —
+                              # `docker logs`/`docker compose logs` shows nothing for a
+                              # long time even though the app is running fine
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - .:/app                    # live-reload: edits reflect immediately (uvicorn --reload)
+      - hf_cache:/root/.cache/huggingface
+    networks:
+      - agentic-net
+    # GPU passthrough for local Whisper STT (WHISPER_DEVICE=cuda in .env).
+    # Only works against the native Docker Engine (`docker context use
+    # default`) — Docker Desktop's VM-based engine on this host has no GPU
+    # passthrough configured. Run compose commands under the native context.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # ─── PostgreSQL ────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: agentic-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: agentic_rag
+      POSTGRES_USER: agentic
+      POSTGRES_PASSWORD: agentic_secret
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentic -d agentic_rag"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - agentic-net
+
+  # ─── Qdrant ────────────────────────────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: agentic-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333' 2>/dev/null && exit 0 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - agentic-net
+
+  # ─── RabbitMQ ──────────────────────────────────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: agentic-rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    networks:
+      - agentic-net
+
+  # ─── Prometheus (profile: monitoring) ──────────────────────────────────────
+  prometheus:
+    profiles: ["monitoring"]
+    image: prom/prometheus:v2.55.0
+    container_name: agentic-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./grafana/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    networks:
+      - agentic-net
+
+  # ─── Grafana (profile: monitoring) ────────────────────────────────────────
+  grafana:
+    profiles: ["monitoring"]
+    image: grafana/grafana:11.3.0
+    container_name: agentic-grafana
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - agentic-net
+
+volumes:
+  postgres_data:
+  qdrant_data:
+  rabbitmq_data:
+  prometheus_data:
+  grafana_data:
+  hf_cache:
+
+networks:
+  agentic-net:
+    driver: bridge

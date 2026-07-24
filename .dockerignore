@@ -1,0 +1,35 @@
+# Secrets & local config
+.env
+.env.*
+!.env.example
+
+# Git
+.git
+.gitignore
+.github
+
+# Python artifacts
+.venv
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Frontend (built separately)
+frontend/
+
+# Dev tools
+grafana/
+notebooks/
+docs/
+tests/
+
+# Editor
+.vscode
+.claude
+
+# OS
+.DS_Store
+Thumbs.db

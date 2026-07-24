@@ -1,0 +1,48 @@
+# ─── Secrets & local config ─────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ─── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# gRPC stubs are generated (scripts/gen_protos.sh) — never commit output
+app/grpc_server/generated/*_pb2*.py
+!app/grpc_server/generated/__init__.py
+
+# ─── Frontend (Node/Next.js) ─────────────────────────────────────────────────
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/next-env.d.ts
+frontend/*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ─── Editor / OS ─────────────────────────────────────────────────────────────
+.vscode/
+.claude/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ─── Local data (not committed — see docs for how to obtain/generate) ───────
+*.db
+*.sqlite3
+
+# ─── Postgres/Qdrant volume backups (see docs/getting-started.md §9) ────────
+# Large binary DB/vector dumps used to skip re-seeding+re-embedding
+# seed_data/ on a new machine/engine — never commit, restore locally instead.
+backups/*.tar.gz
