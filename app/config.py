@@ -62,10 +62,16 @@ class Settings(BaseSettings):
     openrouter_chat_model: str = "anthropic/claude-3.5-sonnet"
     openrouter_embed_model: str = "openai/text-embedding-3-small"
     openrouter_research_model: str = "google/gemini-2.0-flash-exp:free"
-    openrouter_tts_model: str = "openai/gpt-audio-mini"
     # Vision-capable model for OCR fallback on scanned/image-only PDF pages
     # (normal text/table extraction yields nothing for these).
     openrouter_vision_model: str = "google/gemini-2.0-flash-exp:free"
+
+    # ─── OpenAI (TTS only — direct, not via OpenRouter) ───────────────────────
+    # OpenRouter has no genuine /audio/speech endpoint (see
+    # app/core/voice/openai_tts.py) — real TTS needs an actual OpenAI key.
+    openai_api_key: str = ""
+    openai_tts_base_url: str = "https://api.openai.com/v1"
+    openai_tts_model: str = "tts-1"
 
     # ─── STT ─────────────────────────────────────────────────────────────────
     # "local" loads faster-whisper in-process (needs a CUDA host for anything

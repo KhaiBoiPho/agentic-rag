@@ -11,7 +11,6 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncGenerator
 
-import httpx
 from openai import AsyncOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -185,99 +184,3 @@ class OpenRouterClient:
             max_tokens=4096,
         )
         return (resp.choices[0].message.content or "").strip()
-
-    # ─── TTS via OpenRouter ───────────────────────────────────────────────────
-    #
-    # OpenRouter has no plain /audio/speech TTS endpoint (that returns 400
-    # "Model ... does not exist" for every model tried) — audio output is
-    # only available through /chat/completions with modalities=["text",
-    # "audio"], and only when stream=true, and only in raw PCM16 (mp3/wav
-    # output formats are rejected with "does not support 'mp3' when
-    # stream=true. Supported values are: 'pcm16'"). So: stream chat deltas,
-    # collect the base64 PCM16 chunks from delta.audio.data, and wrap the
-    # concatenated PCM in a WAV header ourselves — the OpenAI audio models
-    # (gpt-audio / gpt-audio-mini) render at 24kHz mono 16-bit.
-    _PCM_SAMPLE_RATE = 24000
-    _PCM_CHANNELS = 1
-    _PCM_BITS = 16
-
-    def _wav_header(self, pcm_byte_len: int) -> bytes:
-        import struct
-
-        byte_rate = self._PCM_SAMPLE_RATE * self._PCM_CHANNELS * self._PCM_BITS // 8
-        block_align = self._PCM_CHANNELS * self._PCM_BITS // 8
-        return (
-            b"RIFF"
-            + struct.pack("<I", 36 + pcm_byte_len)
-            + b"WAVE"
-            + b"fmt "
-            + struct.pack(
-                "<IHHIIHH",
-                16,
-                1,
-                self._PCM_CHANNELS,
-                self._PCM_SAMPLE_RATE,
-                byte_rate,
-                block_align,
-                self._PCM_BITS,
-            )
-            + b"data"
-            + struct.pack("<I", pcm_byte_len)
-        )
-
-    async def tts_stream(self, text: str, voice: str = "alloy") -> AsyncGenerator[bytes, None]:
-        """Yield one complete WAV file's bytes (not per-chunk audio — the
-        underlying PCM stream must be fully collected before a valid WAV
-        header, which needs the total byte length, can be written)."""
-        import base64
-        import json
-
-        pcm_chunks: list[bytes] = []
-        async with httpx.AsyncClient() as client:
-            async with client.stream(
-                "POST",
-                f"{settings.openrouter_base_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {settings.openrouter_api_key}",
-                    "Content-Type": "application/json",
-                    **_HEADERS,
-                },
-                json={
-                    "model": settings.openrouter_tts_model,
-                    "modalities": ["text", "audio"],
-                    "audio": {"voice": voice, "format": "pcm16"},
-                    "stream": True,
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "Đọc chính xác nguyên văn nội dung người dùng gửi bằng giọng đọc "
-                                "tự nhiên tiếng Việt. Không thêm bớt, không bình luận, không trả "
-                                "lời như một cuộc hội thoại — chỉ đọc lại đúng nguyên văn."
-                            ),
-                        },
-                        {"role": "user", "content": text},
-                    ],
-                },
-                timeout=60,
-            ) as resp:
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    payload = line[len("data: ") :]
-                    if payload == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(payload)
-                        audio = chunk["choices"][0]["delta"].get("audio")
-                    except (KeyError, IndexError, json.JSONDecodeError):
-                        continue
-                    if audio and audio.get("data"):
-                        pcm_chunks.append(base64.b64decode(audio["data"]))
-
-        pcm = b"".join(pcm_chunks)
-        if not pcm:
-            logger.warning("OpenRouter TTS returned no audio data for text=%r", text[:80])
-            return
-        yield self._wav_header(len(pcm)) + pcm
