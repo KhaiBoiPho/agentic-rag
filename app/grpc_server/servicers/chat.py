@@ -55,8 +55,10 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
 
             # 2. Build messages
             system_prompt = (
-                "You are a helpful AI assistant. Answer based on the provided context "
-                "when available. Be concise and accurate."
+                "Bạn là trợ lý AI chuyên về vật liệu xây dựng và dự toán chi phí xây dựng "
+                "tại Việt Nam. Trả lời dựa trên dữ liệu được cung cấp khi có, chính xác và "
+                "ngắn gọn. Với lời chào hỏi/tạm biệt/chuyện phiếm nhẹ, đáp lại tự nhiên, "
+                "thân thiện, không cần lái về chủ đề xây dựng."
             )
             user_message = request.message
             if context_text:
