@@ -33,9 +33,14 @@ export default function Composer({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
 
+  // Locked while a voice turn is in flight — recording, transcribing, or
+  // (via the `disabled` prop) waiting on the chat reply + TTS playback —
+  // so typed messages can't interleave with an in-progress voice turn.
+  const inputLocked = disabled || recording || transcribing;
+
   function submit() {
     const value = text.trim();
-    if (!value || disabled) return;
+    if (!value || inputLocked) return;
     onSend(value);
     setText('');
   }
@@ -119,7 +124,7 @@ export default function Composer({
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKeyDown}
-            disabled={disabled}
+            disabled={inputLocked}
             rows={1}
             placeholder="Nhập câu hỏi… (Enter để gửi, Shift+Enter xuống dòng)"
             className="max-h-40 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-ink outline-none disabled:opacity-60 dark:text-slate-100"
@@ -141,7 +146,7 @@ export default function Composer({
           <button
             type="button"
             onClick={submit}
-            disabled={disabled || !text.trim()}
+            disabled={inputLocked || !text.trim()}
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ink text-white transition hover:bg-black disabled:opacity-30 dark:bg-white dark:text-black"
             title="Gửi"
           >

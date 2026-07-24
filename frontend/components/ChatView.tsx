@@ -70,7 +70,11 @@ export default function ChatView({ conversationId }: { conversationId: string })
     );
   }
 
-  async function playTts(text: string) {
+  // Awaited by the voice flow so `busy` (and the composer lock) stays on
+  // through actual audio playback, not just until the fetch resolves —
+  // otherwise the user can start a new turn while the reply is still
+  // being spoken.
+  async function playTts(text: string): Promise<void> {
     try {
       const res = await fetch('/api/v1/voice/tts/stream', {
         method: 'POST',
@@ -84,7 +88,12 @@ export default function ChatView({ conversationId }: { conversationId: string })
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
-      audio.play().catch(() => {});
+      await new Promise<void>((resolve) => {
+        audio.onended = () => resolve();
+        audio.onerror = () => resolve();
+        audio.play().catch(() => resolve());
+      });
+      URL.revokeObjectURL(url);
     } catch {
       // best-effort playback
     }
@@ -100,6 +109,7 @@ export default function ChatView({ conversationId }: { conversationId: string })
     const controller = new AbortController();
     abortRef.current = controller;
     let sawDocSource = false;
+    let assistantText = '';
 
     try {
       await streamPost(
@@ -122,6 +132,7 @@ export default function ChatView({ conversationId }: { conversationId: string })
         (evt) => {
           if (evt.type === 'text') {
             if (!evt.done) {
+              assistantText += evt.delta ?? '';
               patchMessage(assistantId, (m) => ({ content: m.content + (evt.delta ?? '') }));
             } else {
               const docSources = (evt.sources ?? []).filter((s: any) => 'document_name' in s);
@@ -147,12 +158,11 @@ export default function ChatView({ conversationId }: { conversationId: string })
         },
         { signal: controller.signal },
       );
-      if (viaVoice) {
-        setMessages((prev) => {
-          const m = prev.find((x) => x.id === assistantId);
-          if (m?.content) playTts(m.content);
-          return prev;
-        });
+      if (viaVoice && assistantText) {
+        // Awaited on purpose — `busy` (composer lock) must stay on for the
+        // full voice round-trip, not just until the text finishes
+        // streaming, so the user can't start typing/sending mid-playback.
+        await playTts(assistantText);
       }
     } catch (err) {
       patchMessage(assistantId, {
