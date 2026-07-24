@@ -71,8 +71,11 @@ class Settings(BaseSettings):
     # "local" loads faster-whisper in-process (needs a CUDA host for anything
     # bigger than "base" at usable latency). "runpod" calls out to a RunPod
     # Serverless GPU endpoint (see runpod/whisper-stt/) instead — the way to
-    # get GPU Whisper on a host with no GPU of its own (e.g. Railway).
-    stt_backend: Literal["local", "runpod"] = "local"
+    # get GPU Whisper on a host with no GPU of its own (e.g. Railway), at the
+    # cost of serverless cold-start latency. "http" calls a plain HTTP server
+    # you run yourself on a GPU box (see local-gpu-stt/), tunneled in via
+    # ngrok or similar — no cold start, but the box has to be on.
+    stt_backend: Literal["local", "runpod", "http"] = "local"
 
     whisper_model_size: str = "base"
     whisper_device: Literal["cpu", "cuda"] = "cpu"
@@ -81,6 +84,9 @@ class Settings(BaseSettings):
     runpod_api_key: str = ""
     runpod_stt_endpoint_id: str = ""
     runpod_base_url: str = "https://api.runpod.ai/v2"
+
+    stt_http_url: str = ""  # e.g. https://xxxx.ngrok-free.app
+    stt_http_secret: str = ""  # sent as X-STT-Secret, checked by local-gpu-stt/server.py
 
     # ─── Firecrawl ───────────────────────────────────────────────────────────
     firecrawl_api_key: str = ""

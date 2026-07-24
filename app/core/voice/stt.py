@@ -1,7 +1,9 @@
-"""STT — dispatches to a local Whisper model or a RunPod Serverless GPU
-endpoint depending on `settings.stt_backend`. See:
+"""STT — dispatches to a local Whisper model, a RunPod Serverless GPU
+endpoint, or a self-hosted HTTP GPU server, depending on
+`settings.stt_backend`. See:
   - app/core/voice/local_whisper.py (in-process, faster-whisper)
   - app/core/voice/runpod_whisper.py (out-of-process, GPU on RunPod)
+  - app/core/voice/http_whisper.py   (out-of-process, your own GPU box)
 """
 
 from __future__ import annotations
@@ -15,6 +17,11 @@ class STTProvider:
             from app.core.voice.runpod_whisper import RunpodWhisperService
 
             return await RunpodWhisperService().transcribe(audio_bytes, language)
+
+        if settings.stt_backend == "http":
+            from app.core.voice.http_whisper import HttpWhisperService
+
+            return await HttpWhisperService().transcribe(audio_bytes, language)
 
         from app.core.voice.local_whisper import LocalWhisperService
 
