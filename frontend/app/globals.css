@@ -6,32 +6,11 @@ html,
 body {
   overflow: hidden;
   height: 100%;
-  /* DESIGN.md (Stripe): ss01 stylistic set applied globally on the body */
-  font-feature-settings: 'ss01';
 }
 
-/* DESIGN.md: tabular figures for any money/numeric cell */
+/* Tabular figures for money/numeric cells (Usage page). */
 .tabular-money {
-  font-feature-settings: 'tnum';
   font-variant-numeric: tabular-nums;
-}
-
-/* DESIGN.md: gradient-mesh backdrop — cream / lavender / indigo / ruby wash,
-   approximated with layered radial-gradients (the real mesh is organic SVG
-   blobs, out of scope here). Used only on the auth "hero" surface. */
-.gradient-mesh {
-  background-color: #f6f9fc;
-  background-image:
-    radial-gradient(ellipse 60% 55% at 12% 8%, rgba(245, 233, 212, 0.9), transparent 60%),
-    radial-gradient(ellipse 55% 50% at 45% 0%, rgba(185, 185, 249, 0.85), transparent 60%),
-    radial-gradient(ellipse 50% 45% at 78% 12%, rgba(83, 58, 253, 0.35), transparent 60%),
-    radial-gradient(ellipse 45% 40% at 100% 5%, rgba(234, 34, 97, 0.25), transparent 55%);
-}
-.dark .gradient-mesh {
-  background-color: #0f172a;
-  background-image:
-    radial-gradient(ellipse 60% 55% at 12% 8%, rgba(83, 58, 253, 0.22), transparent 60%),
-    radial-gradient(ellipse 50% 45% at 78% 12%, rgba(234, 34, 97, 0.16), transparent 55%);
 }
 
 #__next,
@@ -41,7 +20,7 @@ body > div:first-child {
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgb(203 213 225) transparent;
+  scrollbar-color: rgb(217 217 227) transparent;
 }
 
 .dark * {
@@ -74,7 +53,7 @@ body > div:first-child {
   margin: 0.5em 0;
 }
 .markdown-body code {
-  background: rgba(148, 163, 184, 0.2);
+  background: rgba(142, 142, 160, 0.16);
   padding: 0.1em 0.35em;
   border-radius: 0.3em;
   font-size: 0.9em;
@@ -90,7 +69,7 @@ body > div:first-child {
 }
 .markdown-body th,
 .markdown-body td {
-  border: 1px solid #e3e8ee;
+  border: 1px solid #e5e5e5;
   padding: 0.35em 0.6em;
   text-align: left;
 }
@@ -99,11 +78,11 @@ body > div:first-child {
   border-color: rgba(148, 163, 184, 0.3);
 }
 .markdown-body a {
-  color: #533afd;
+  color: #0d0d0d;
   text-decoration: underline;
 }
 .dark .markdown-body a {
-  color: #9d97fb;
+  color: #ececec;
 }
 
 .cite-badge {
@@ -116,13 +95,13 @@ body > div:first-child {
   font-size: 0.65em;
   font-weight: 500;
   border-radius: 999px;
-  background: #b9b9f9;
-  color: #4434d4;
+  background: #ececf1;
+  color: #353740;
   vertical-align: super;
   text-decoration: none;
   margin: 0 0.05em;
 }
 .dark .cite-badge {
-  background: rgba(102, 94, 253, 0.25);
-  color: #b9b9f9;
+  background: rgba(236, 236, 241, 0.15);
+  color: #d9d9e3;
 }

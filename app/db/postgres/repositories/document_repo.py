@@ -45,7 +45,9 @@ class DocumentRepository:
         ingest fresh (no row yet)."""
         async with get_session() as s:
             result = await s.execute(
-                select(Document.filename, Document.id, Document.status).where(Document.kb_id == uuid.UUID(kb_id))
+                select(Document.filename, Document.id, Document.status).where(
+                    Document.kb_id == uuid.UUID(kb_id)
+                )
             )
             return {filename: (str(doc_id), status) for filename, doc_id, status in result.all()}
 
@@ -59,10 +61,14 @@ class DocumentRepository:
             q = select(Document).where(*base_filter)
             total_result = await s.execute(select(func.count()).select_from(q.subquery()))
             total = total_result.scalar() or 0
-            result = await s.execute(q.order_by(Document.created_at.desc()).limit(limit).offset(offset))
+            result = await s.execute(
+                q.order_by(Document.created_at.desc()).limit(limit).offset(offset)
+            )
             return list(result.scalars().all()), total
 
-    async def update_status(self, doc_id: str, status: str, chunk_count: int = 0, error: str = "") -> None:
+    async def update_status(
+        self, doc_id: str, status: str, chunk_count: int = 0, error: str = ""
+    ) -> None:
         async with get_session() as s:
             doc = await s.get(Document, uuid.UUID(doc_id))
             if doc:

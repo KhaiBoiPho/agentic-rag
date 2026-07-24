@@ -4,6 +4,7 @@ Deliberately NOT a semantic/vector search: a wrong material or region match
 here produces a wrong construction cost downstream, so this tool queries
 Postgres directly and reports "not found" rather than a fuzzy best guess.
 """
+
 from __future__ import annotations
 
 from mcp.types import TextContent, Tool
@@ -19,9 +20,19 @@ PRICE_LOOKUP_TOOL = Tool(
     inputSchema={
         "type": "object",
         "properties": {
-            "region": {"type": "string", "enum": ["HN", "DN", "HCM"], "description": "Vùng giá: Hà Nội | Đà Nẵng | TPHCM"},
-            "material_category": {"type": "string", "description": "Nhóm vật liệu, vd 'xi măng', 'thép', 'cát'"},
-            "material_name": {"type": "string", "description": "Tên vật liệu cụ thể, vd 'xi măng PCB40'"},
+            "region": {
+                "type": "string",
+                "enum": ["HN", "DN", "HCM"],
+                "description": "Vùng giá: Hà Nội | Đà Nẵng | TPHCM",
+            },
+            "material_category": {
+                "type": "string",
+                "description": "Nhóm vật liệu, vd 'xi măng', 'thép', 'cát'",
+            },
+            "material_name": {
+                "type": "string",
+                "description": "Tên vật liệu cụ thể, vd 'xi măng PCB40'",
+            },
         },
         "required": ["region"],
     },
@@ -40,15 +51,17 @@ async def handle_lookup_material_price(args: dict) -> list[TextContent]:
     )
 
     if not rows:
-        return [TextContent(
-            type="text",
-            text=(
-                f"Không tìm thấy giá cho vùng={args['region']}, "
-                f"category={args.get('material_category', '-')}, "
-                f"name={args.get('material_name', '-')}. "
-                "Không suy đoán giá — cần bổ sung dữ liệu nguồn hoặc mở rộng tiêu chí tìm kiếm."
-            ),
-        )]
+        return [
+            TextContent(
+                type="text",
+                text=(
+                    f"Không tìm thấy giá cho vùng={args['region']}, "
+                    f"category={args.get('material_category', '-')}, "
+                    f"name={args.get('material_name', '-')}. "
+                    "Không suy đoán giá — cần bổ sung dữ liệu nguồn hoặc mở rộng tiêu chí tìm kiếm."
+                ),
+            )
+        ]
 
     lines = [
         "| Vật liệu | Đơn giá | Điều kiện giao | Kỳ | Nguồn |",
@@ -68,6 +81,9 @@ async def handle_lookup_material_price(args: dict) -> list[TextContent]:
         }.get(r.source_type, r.source_type)
         name = r.material_name + (f" ({r.spec})" if r.spec else "")
         source_cell = source + (f" — {r.manufacturer}" if r.manufacturer else "")
-        lines.append(f"| {name} | **{r.price_ex_vat:,.0f} đ**/{r.unit} | {basis} | {period} | {source_cell} |")
+        lines.append(
+            f"| {name} | **{r.price_ex_vat:,.0f} đ**/{r.unit} | {basis} "
+            f"| {period} | {source_cell} |"
+        )
 
     return [TextContent(type="text", text="\n".join(lines))]

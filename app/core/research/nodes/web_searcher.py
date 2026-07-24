@@ -1,8 +1,8 @@
 """Node 2 — Search the web using Firecrawl for each expanded query."""
+
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 
 import httpx
@@ -13,7 +13,9 @@ from app.core.research.state import ResearchState
 logger = logging.getLogger(__name__)
 
 
-async def firecrawl_search(query: str, max_results: int, *, scrape: bool = True, timeout: float = 15) -> list[dict]:
+async def firecrawl_search(
+    query: str, max_results: int, *, scrape: bool = True, timeout: float = 15
+) -> list[dict]:
     """Call Firecrawl search API, optionally scraping the top results.
 
     `scrape=True` fetches each page's full markdown (higher quality context
@@ -44,12 +46,14 @@ async def firecrawl_search(query: str, max_results: int, *, scrape: bool = True,
         data = resp.json()
         results = []
         for item in data.get("data", []):
-            results.append({
-                "url": item.get("url", ""),
-                "title": item.get("title", ""),
-                "content": item.get("markdown", "") or item.get("description", ""),
-                "snippet": item.get("description", "")[:300],
-            })
+            results.append(
+                {
+                    "url": item.get("url", ""),
+                    "title": item.get("title", ""),
+                    "content": item.get("markdown", "") or item.get("description", ""),
+                    "snippet": item.get("description", "")[:300],
+                }
+            )
         return results
 
 
@@ -86,7 +90,9 @@ async def web_searcher_node(state: ResearchState) -> dict:
                 "status": "completed",
                 "content": f"Found {len(unique)} sources",
                 "progress": 0.3,
-                "sources": [{"url": r["url"], "title": r["title"], "snippet": r["snippet"]} for r in unique],
+                "sources": [
+                    {"url": r["url"], "title": r["title"], "snippet": r["snippet"]} for r in unique
+                ],
                 "iteration": state.get("iteration", 0),
             }
         ],

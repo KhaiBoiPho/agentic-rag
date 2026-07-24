@@ -1,9 +1,11 @@
 """MCP Client — consumes external MCP servers (filesystem, browser, etc.)."""
+
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator
+from typing import Any
 
 from mcp import ClientSession
 from mcp.client.sse import sse_client

@@ -23,6 +23,7 @@ Called from app/main.py::on_startup() as a background task — must never
 raise, since a seeding failure (e.g. missing OPENROUTER_API_KEY) shouldn't
 crash the app.
 """
+
 from __future__ import annotations
 
 import logging
@@ -57,7 +58,9 @@ async def _ingest_file(pipeline, kb_id: str, path: Path, config: dict) -> None:
             logger.warning("seed ingest failed file=%s error=%s", path.name, event.get("error"))
 
 
-async def _seed_kb(kb_id: str, kb_label: str, pipeline, files_with_config: list[tuple[Path, dict]]) -> None:
+async def _seed_kb(
+    kb_id: str, kb_label: str, pipeline, files_with_config: list[tuple[Path, dict]]
+) -> None:
     kb_repo = KnowledgeBaseRepository()
     if await kb_repo.get(kb_id, SYSTEM_USER_ID) is None:
         logger.warning("system KB '%s' row missing — run `alembic upgrade head` first", kb_label)
@@ -77,16 +80,22 @@ async def _seed_kb(kb_id: str, kb_label: str, pipeline, files_with_config: list[
             continue
         logger.warning(
             "seed: %s/%s stuck at status=%s from a prior run — deleting stale row and retrying",
-            kb_label, path.name, status,
+            kb_label,
+            path.name,
+            status,
         )
         await doc_repo.delete(doc_id, SYSTEM_USER_ID)
         pending.append((path, config))
 
     if not pending:
-        logger.info("KB '%s' already fully seeded (%d files) — skipping", kb_label, len(files_with_config))
+        logger.info(
+            "KB '%s' already fully seeded (%d files) — skipping", kb_label, len(files_with_config)
+        )
         return
 
-    logger.info("seeding KB '%s': %d/%d files remaining", kb_label, len(pending), len(files_with_config))
+    logger.info(
+        "seeding KB '%s': %d/%d files remaining", kb_label, len(pending), len(files_with_config)
+    )
     for i, (path, config) in enumerate(pending, 1):
         logger.info("seed [%s %d/%d] %s", kb_label, i, len(pending), path.name)
         try:
@@ -105,7 +114,9 @@ async def seed_system_kb_documents() -> None:
     try:
         files = sorted(p for p in (root / "knowledge").glob("*") if p.is_file())
         await _seed_kb(
-            KB_KNOWLEDGE_ID, "Kiến thức xây dựng", IngestionPipeline(),
+            KB_KNOWLEDGE_ID,
+            "Kiến thức xây dựng",
+            IngestionPipeline(),
             [(p, {}) for p in files],
         )
     except Exception:
@@ -119,6 +130,8 @@ async def seed_system_kb_documents() -> None:
                 continue
             for path in sorted(region_dir.glob("*.pdf")):
                 files_with_config.append((path, {"region": region, "price_period": ""}))
-        await _seed_kb(KB_PRICING_ID, "Dự toán giá nhà", PriceExtractionPipeline(), files_with_config)
+        await _seed_kb(
+            KB_PRICING_ID, "Dự toán giá nhà", PriceExtractionPipeline(), files_with_config
+        )
     except Exception:
         logger.exception("seed_system_kb_documents: pricing KB step failed")

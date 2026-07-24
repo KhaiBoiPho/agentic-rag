@@ -9,6 +9,7 @@ Adding a new intent/form: add an entry to FORM_SCHEMAS, add matching
 keywords to _INTENT_KEYWORDS, write the tool it submits to. No changes to
 app/api/v1/chat.py are needed beyond that.
 """
+
 from __future__ import annotations
 
 import re
@@ -18,10 +19,24 @@ FORM_SCHEMAS: dict[str, dict] = {
         "form_id": "construction_cost",
         "title": "Thông tin để tính chi phí xây dựng",
         "fields": [
-            {"name": "area_per_floor_m2", "label": "Diện tích 1 tầng (m2)", "type": "number", "required": True},
-            {"name": "num_floors", "label": "Số tầng", "type": "number", "required": True, "default": 1},
             {
-                "name": "region", "label": "Khu vực", "type": "select", "required": True,
+                "name": "area_per_floor_m2",
+                "label": "Diện tích 1 tầng (m2)",
+                "type": "number",
+                "required": True,
+            },
+            {
+                "name": "num_floors",
+                "label": "Số tầng",
+                "type": "number",
+                "required": True,
+                "default": 1,
+            },
+            {
+                "name": "region",
+                "label": "Khu vực",
+                "type": "select",
+                "required": True,
                 "options": [
                     {"value": "HN", "label": "Hà Nội"},
                     {"value": "DN", "label": "Đà Nẵng"},
@@ -29,7 +44,9 @@ FORM_SCHEMAS: dict[str, dict] = {
                 ],
             },
             {
-                "name": "finish_level", "label": "Mức hoàn thiện", "type": "select",
+                "name": "finish_level",
+                "label": "Mức hoàn thiện",
+                "type": "select",
                 "default": "hoan_thien_co_ban",
                 "options": [
                     {"value": "tho", "label": "Thô"},

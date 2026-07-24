@@ -28,6 +28,7 @@ from the actual unit-filtered candidates pulled from the DB. The LLM never
 invents a price — it only selects among real rows, or says none fit, which
 maps to an honest "no data" line instead of a guess.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -44,7 +45,10 @@ COST_TOOL = Tool(
     inputSchema={
         "type": "object",
         "properties": {
-            "floor_area_m2": {"type": "number", "description": "Tổng diện tích sàn xây dựng (m2), đã gồm các tầng"},
+            "floor_area_m2": {
+                "type": "number",
+                "description": "Tổng diện tích sàn xây dựng (m2), đã gồm các tầng",
+            },
             "region": {"type": "string", "enum": ["HN", "DN", "HCM"]},
             "finish_level": {
                 "type": "string",
@@ -79,7 +83,11 @@ _COEFFICIENT_UNITS = {
 }
 
 _FINISH_MULTIPLIER = {"tho": 1.0, "hoan_thien_co_ban": 1.0, "hoan_thien_cao_cap": 1.15}
-_FINISH_LABELS = {"tho": "thô", "hoan_thien_co_ban": "hoàn thiện cơ bản", "hoan_thien_cao_cap": "hoàn thiện cao cấp"}
+_FINISH_LABELS = {
+    "tho": "thô",
+    "hoan_thien_co_ban": "hoàn thiện cơ bản",
+    "hoan_thien_cao_cap": "hoàn thiện cao cấp",
+}
 
 
 async def _disambiguate(llm, target_desc: str, candidates: list) -> int | None:
@@ -91,13 +99,14 @@ async def _disambiguate(llm, target_desc: str, candidates: list) -> int | None:
         return 0
 
     listing = "\n".join(
-        f"{i}. {c.material_name}" + (f" ({c.spec})" if c.spec else "")
+        f"{i}. {c.material_name}"
+        + (f" ({c.spec})" if c.spec else "")
         + f" — đơn vị: {c.unit} — giá: {c.price_ex_vat:,.0f} đ"
         for i, c in enumerate(candidates)
     )
     prompt = (
         f"Trong danh sách vật liệu xây dựng dưới đây, hãy chọn ĐÚNG MỘT dòng khớp với mô tả sau: "
-        f"\"{target_desc}\".\n\nDanh sách:\n{listing}\n\n"
+        f'"{target_desc}".\n\nDanh sách:\n{listing}\n\n'
         "Chỉ trả lời bằng số thứ tự (index) của dòng đúng nhất. Nếu KHÔNG có dòng nào thực sự phù "
         "hợp với mô tả (đừng chọn đại một dòng chỉ gần giống tên), trả lời -1. Không giải thích gì "
         "thêm, chỉ một con số duy nhất."
@@ -111,7 +120,9 @@ async def _disambiguate(llm, target_desc: str, candidates: list) -> int | None:
         # fixed model the rest of the app hardcodes.
         resp = await llm.chat(
             messages=[{"role": "user", "content": prompt}],
-            model="openai/gpt-4o-mini", temperature=0.0, max_tokens=10,
+            model="openai/gpt-4o-mini",
+            temperature=0.0,
+            max_tokens=10,
         )
         idx = int(resp.strip().split()[0])
     except Exception:
@@ -155,14 +166,25 @@ def build_cost_facts(data: dict) -> str:
     ]
     for li in data["line_items"]:
         if li["subtotal"] is not None:
-            tag = f" [{li['source_index']}] (giá từ web, chưa xác thực)" if li.get("via_web") else ""
-            lines.append(f"- {li['item']}: {li['qty']:g} {li['unit']} × {li['unit_price']:,.0f} đ = {li['subtotal']:,.0f} đ{tag}")
+            tag = (
+                f" [{li['source_index']}] (giá từ web, chưa xác thực)" if li.get("via_web") else ""
+            )
+            lines.append(
+                f"- {li['item']}: {li['qty']:g} {li['unit']} × {li['unit_price']:,.0f} đ "
+                f"= {li['subtotal']:,.0f} đ{tag}"
+            )
         else:
-            lines.append(f"- {li['item']}: {li['qty']:g} {li['unit']} — KHÔNG có dữ liệu giá (kể cả tìm trên web)")
+            lines.append(
+                f"- {li['item']}: {li['qty']:g} {li['unit']} — "
+                "KHÔNG có dữ liệu giá (kể cả tìm trên web)"
+            )
     lines.append("")
     if data["has_full_pricing"]:
         low, high = data["priced_subtotal"] * 0.85, data["priced_subtotal"] * 1.20
-        lines.append(f"Tổng ước lượng chi phí vật liệu chính: {low:,.0f} – {high:,.0f} đ (sai số ±15%/+20% ở cấp độ ý tưởng).")
+        lines.append(
+            f"Tổng ước lượng chi phí vật liệu chính: {low:,.0f} – {high:,.0f} đ "
+            "(sai số ±15%/+20% ở cấp độ ý tưởng)."
+        )
     else:
         lines.append(
             f"KHÔNG đưa ra tổng vì thiếu giá của: {', '.join(data['missing'])} "
@@ -198,7 +220,9 @@ async def _compute_cost(args: dict) -> dict:
     paint_area = area * coef["son_m2_per_m2_san"] * _FINISH_MULTIPLIER.get(finish_level, 1.0)
 
     concrete_q = formulas.concrete(concrete_vol, ready_mix=True)
-    steel_q = formulas.rebar_from_geometry(diameter_mm=16, total_length_m=steel_kg / formulas.rebar_unit_weight_kg_per_m(16))
+    steel_q = formulas.rebar_from_geometry(
+        diameter_mm=16, total_length_m=steel_kg / formulas.rebar_unit_weight_kg_per_m(16)
+    )
     wall_q = formulas.masonry_wall(length_m=wall_area / 3.0, height_m=3.0, thickness_m=0.1)
     paint_q = formulas.paint(paint_area)
 
@@ -208,7 +232,9 @@ async def _compute_cost(args: dict) -> dict:
     missing: list[str] = []
     web_sources: list[dict] = []  # [{index, title, url}] — cited as [n] in the output text
 
-    async def price_line(label: str, name_query: str, qty: float, unit: str, target_desc: str) -> dict:
+    async def price_line(
+        label: str, name_query: str, qty: float, unit: str, target_desc: str
+    ) -> dict:
         """Pure — returns a line dict, no shared-state mutation, so the four
         calls can run concurrently (see asyncio.gather below). web_sources
         indices/citation numbers are assigned afterwards in fixed order."""
@@ -217,8 +243,12 @@ async def _compute_cost(args: dict) -> dict:
         if idx is not None:
             unit_price = float(candidates[idx].price_ex_vat)
             return {
-                "item": label, "qty": round(qty, 2), "unit": unit,
-                "unit_price": unit_price, "subtotal": round(qty * unit_price, 0), "via_web": False,
+                "item": label,
+                "qty": round(qty, 2),
+                "unit": unit,
+                "unit_price": unit_price,
+                "subtotal": round(qty * unit_price, 0),
+                "via_web": False,
                 # The price came straight from a document in the KB — carry
                 # its source doc so the answer can cite it as RAG (this is
                 # document-backed data, not a guess or a web hit).
@@ -231,12 +261,25 @@ async def _compute_cost(args: dict) -> dict:
         # output text; never silently blended with DB-backed confidence.
         web_price, url, title = await search_web_price(target_desc, region)
         if web_price is None:
-            return {"item": label, "qty": qty, "unit": unit, "unit_price": None, "subtotal": None, "via_web": False, "_missing": True}
+            return {
+                "item": label,
+                "qty": qty,
+                "unit": unit,
+                "unit_price": None,
+                "subtotal": None,
+                "via_web": False,
+                "_missing": True,
+            }
 
         return {
-            "item": label, "qty": round(qty, 2), "unit": unit,
-            "unit_price": web_price, "subtotal": round(qty * web_price, 0),
-            "via_web": True, "_url": url, "_title": title,
+            "item": label,
+            "qty": round(qty, 2),
+            "unit": unit,
+            "unit_price": web_price,
+            "subtotal": round(qty * web_price, 0),
+            "via_web": True,
+            "_url": url,
+            "_title": title,
         }
 
     # Run all four material lookups concurrently — each is an independent
@@ -245,22 +288,35 @@ async def _compute_cost(args: dict) -> dict:
     # searches back-to-back, ~15s+ each). gather overlaps them.
     results = await asyncio.gather(
         price_line(
-            "bê tông thương phẩm", "bê tông", concrete_q.quantities["be_tong_thuong_pham"], "m3",
+            "bê tông thương phẩm",
+            "bê tông",
+            concrete_q.quantities["be_tong_thuong_pham"],
+            "m3",
             "bê tông thương phẩm/bê tông tươi trộn sẵn dùng đổ móng, cột, dầm, sàn nhà dân dụng — "
-            "KHÔNG phải bê tông đúc sẵn dạng tấm/panel/cấu kiện/cống/kè, KHÔNG phải cát dùng để trộn bê tông",
+            "KHÔNG phải bê tông đúc sẵn dạng tấm/panel/cấu kiện/cống/kè, "
+            "KHÔNG phải cát dùng để trộn bê tông",
         ),
         price_line(
-            "thép xây dựng", "thép", sum(steel_q.quantities.values()), "kg",
+            "thép xây dựng",
+            "thép",
+            sum(steel_q.quantities.values()),
+            "kg",
             "thép thanh/thép cây/thép cuộn dùng làm cốt thép bê tông (thép xây dựng) — "
             "KHÔNG phải ống thép, tôn thép, thép mạ kẽm, khung móng thép đúc sẵn",
         ),
         price_line(
-            "gạch xây", "gạch", wall_q.quantities["so_vien_gach"], "viên",
+            "gạch xây",
+            "gạch",
+            wall_q.quantities["so_vien_gach"],
+            "viên",
             "gạch xây tường (gạch đặc, gạch rỗng, gạch block bê tông) dùng xây tường nhà — "
             "KHÔNG phải gạch ốp lát/gạch trang trí bề mặt",
         ),
         price_line(
-            "sơn", "sơn", paint_q.quantities["son"], "lít",
+            "sơn",
+            "sơn",
+            paint_q.quantities["son"],
+            "lít",
             "sơn nước/sơn phủ tường dùng sơn hoàn thiện công trình dân dụng — "
             "KHÔNG phải sơn giao thông/sơn kẻ vạch đường",
         ),
@@ -272,7 +328,9 @@ async def _compute_cost(args: dict) -> dict:
         if r.pop("_missing", False):
             missing.append(r["item"])
         if r.get("via_web"):
-            web_sources.append({"index": len(web_sources) + 1, "title": r.pop("_title"), "url": r.pop("_url")})
+            web_sources.append(
+                {"index": len(web_sources) + 1, "title": r.pop("_title"), "url": r.pop("_url")}
+            )
             r["source_index"] = len(web_sources)
         did = r.pop("_document_id", None)
         if did:
@@ -289,10 +347,17 @@ async def _compute_cost(args: dict) -> dict:
 
     return {
         "error": None,
-        "area": area, "region": region, "finish_level": finish_level, "coef": coef,
-        "line_items": line_items, "missing": missing, "web_sources": web_sources,
-        "rag_sources": rag_sources, "rag_kb_name": rag_kb_name,
-        "priced_subtotal": priced_subtotal, "has_full_pricing": has_full_pricing,
+        "area": area,
+        "region": region,
+        "finish_level": finish_level,
+        "coef": coef,
+        "line_items": line_items,
+        "missing": missing,
+        "web_sources": web_sources,
+        "rag_sources": rag_sources,
+        "rag_kb_name": rag_kb_name,
+        "priced_subtotal": priced_subtotal,
+        "has_full_pricing": has_full_pricing,
     }
 
 
@@ -342,8 +407,9 @@ def _format_cost_text(data: dict) -> str:
     coef = data["coef"]
 
     lines = [
-        f"### Ước lượng ý tưởng chi phí vật liệu thô",
-        f"**{area:.0f} m² sàn** · vùng **{region}** · mức hoàn thiện **{_FINISH_LABELS.get(finish_level, finish_level)}**",
+        "### Ước lượng ý tưởng chi phí vật liệu thô",
+        f"**{area:.0f} m² sàn** · vùng **{region}** · "
+        f"mức hoàn thiện **{_FINISH_LABELS.get(finish_level, finish_level)}**",
         "",
         "*(Chưa gồm nhân công, thiết bị, lợi nhuận nhà thầu, VAT, chi phí gián tiếp.)*",
         "",
@@ -356,7 +422,10 @@ def _format_cost_text(data: dict) -> str:
             unit_price_cell = f"{li['unit_price']:,.0f} đ{tag}"
             if li.get("via_web"):
                 unit_price_cell += " ⚠️"
-            lines.append(f"| {li['item']} | {li['qty']:g} {li['unit']} | {unit_price_cell} | **{li['subtotal']:,.0f} đ** |")
+            lines.append(
+                f"| {li['item']} | {li['qty']:g} {li['unit']} | {unit_price_cell} "
+                f"| **{li['subtotal']:,.0f} đ** |"
+            )
         else:
             lines.append(f"| {li['item']} | {li['qty']:g} {li['unit']} | _không có dữ liệu_ | — |")
 
@@ -367,17 +436,21 @@ def _format_cost_text(data: dict) -> str:
         low, high = priced_subtotal * 0.85, priced_subtotal * 1.20
         lines.append(f"### Tổng chi phí vật liệu chính: **{low:,.0f} – {high:,.0f} đ**")
         lines.append("")
-        lines.append("*Khoảng ±15%/+20% phản ánh sai số ở cấp độ ý tưởng (mục 4.1), không phải dải dung sai định mức.*")
+        lines.append(
+            "*Khoảng ±15%/+20% phản ánh sai số ở cấp độ ý tưởng (mục 4.1), "
+            "không phải dải dung sai định mức.*"
+        )
         if web_sources:
             lines.append("")
             lines.append(
-                f"> ⚠️ {len(web_sources)} hạng mục dùng giá tham khảo từ web (đánh dấu `[$n]` ở bảng trên, "
-                "nguồn ở cuối) — độ tin cậy thấp hơn dữ liệu công bố chính thức, nên kiểm tra lại trước "
-                "khi dùng cho quyết định thật."
+                f"> ⚠️ {len(web_sources)} hạng mục dùng giá tham khảo từ web "
+                "(đánh dấu `[$n]` ở bảng trên, nguồn ở cuối) — độ tin cậy thấp hơn "
+                "dữ liệu công bố chính thức, nên kiểm tra lại trước khi dùng cho quyết định thật."
             )
     else:
         lines.append(
-            f"> **Không đủ dữ liệu giá cho:** {', '.join(missing)} — không đưa ra tổng để tránh thiếu "
+            f"> **Không đủ dữ liệu giá cho:** {', '.join(missing)} — "
+            "không đưa ra tổng để tránh thiếu "
             "sót một hạng mục lớn (mục 56: không đưa một số duy nhất khi thiếu dữ liệu)."
         )
 
@@ -390,8 +463,9 @@ def _format_cost_text(data: dict) -> str:
     lines.append("</details>")
     lines.append("")
     lines.append(
-        "*Đây chỉ là chi phí vật liệu của 4 hạng mục chính, không phải giá xây nhà trọn gói, và "
-        "không thay thế dự toán từ hồ sơ thiết kế đã duyệt, định mức hiện hành hoặc báo giá hợp lệ.*"
+        "*Đây chỉ là chi phí vật liệu của 4 hạng mục chính, không phải giá xây nhà trọn gói, "
+        "và không thay thế dự toán từ hồ sơ thiết kế đã duyệt, "
+        "định mức hiện hành hoặc báo giá hợp lệ.*"
     )
 
     if web_sources:

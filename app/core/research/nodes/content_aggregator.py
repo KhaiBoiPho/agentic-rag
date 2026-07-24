@@ -1,4 +1,5 @@
 """Node 3 — Aggregate all scraped content into a single text corpus."""
+
 from __future__ import annotations
 
 from app.core.research.state import ResearchState

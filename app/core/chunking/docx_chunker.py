@@ -4,12 +4,12 @@ Strategy (RAGFlow-inspired):
   Iterate the DOCX body in DOM order, collecting (text | table) elements.
   Tables are rendered as HTML. Context is attached from surrounding text.
 """
+
 from __future__ import annotations
 
 from io import BytesIO
 
 from docx import Document
-from docx.oxml.ns import qn
 from docx.table import Table as DocxTable
 from docx.text.paragraph import Paragraph
 
@@ -68,9 +68,7 @@ class DocxChunker(BaseChunker):
         for i, row in enumerate(table.rows):
             cells = row.cells
             tag = "th" if i == 0 else "td"
-            row_html = "".join(
-                f"<{tag}>{c.text.strip()}</{tag}>" for c in cells
-            )
+            row_html = "".join(f"<{tag}>{c.text.strip()}</{tag}>" for c in cells)
             html.append(f"<tr>{row_html}</tr>")
         html.append("</table>")
         return "\n".join(html)

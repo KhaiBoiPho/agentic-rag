@@ -1,4 +1,5 @@
 """Application entry point — starts FastAPI (HTTP) + gRPC concurrently."""
+
 from __future__ import annotations
 
 import asyncio
@@ -63,6 +64,7 @@ def create_app() -> FastAPI:
 
     # Health + metrics at root level (for Prometheus scraping)
     from app.api.health import router as health_router
+
     app.include_router(health_router)
 
     # All other API routes under /api
@@ -108,6 +110,7 @@ def create_app() -> FastAPI:
         # faster-whisper install) shouldn't crash the app, only voice.
         async def _load_whisper_safe():
             from app.core.voice.local_whisper import LocalWhisperService
+
             try:
                 await asyncio.get_event_loop().run_in_executor(None, LocalWhisperService.get().load)
                 logger.info("local Whisper STT model ready")

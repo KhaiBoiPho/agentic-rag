@@ -1,4 +1,5 @@
 """LangGraph state schema for deep research."""
+
 from __future__ import annotations
 
 import operator

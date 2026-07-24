@@ -10,6 +10,7 @@ just prepares `sources` (and a `final_response` fallback equal to the
 summary, in case a caller reads it directly without going through the
 graph's stream()).
 """
+
 from __future__ import annotations
 
 from app.core.research.state import ResearchState

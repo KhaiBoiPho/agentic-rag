@@ -1,4 +1,5 @@
 """Prometheus metrics — application-level counters, histograms, gauges."""
+
 from __future__ import annotations
 
 from prometheus_client import Counter, Gauge, Histogram, make_asgi_app

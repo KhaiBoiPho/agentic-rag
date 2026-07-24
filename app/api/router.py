@@ -1,7 +1,19 @@
 from fastapi import APIRouter
 
-from app.api.v1 import auth, chat, config, documents, knowledge_base, notes, projects, research, search, usage, voice
 from app.api import health
+from app.api.v1 import (
+    auth,
+    chat,
+    config,
+    documents,
+    knowledge_base,
+    notes,
+    projects,
+    research,
+    search,
+    usage,
+    voice,
+)
 
 api_router = APIRouter()
 

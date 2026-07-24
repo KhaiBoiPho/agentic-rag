@@ -1,14 +1,15 @@
 """Deep research REST endpoint — SSE stream of 6-node LangGraph progress."""
+
 from __future__ import annotations
 
 import json
-from typing import AsyncGenerator, Optional
+from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.api.deps import CurrentUser, SSE_HEADERS
+from app.api.deps import SSE_HEADERS, CurrentUser
 from app.core.research.graph import DeepResearchGraph
 from app.core.research.nodes.web_searcher import firecrawl_search
 

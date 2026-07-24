@@ -1,4 +1,5 @@
 """Qdrant vector store — upsert chunks + hybrid search (dense + sparse BM25)."""
+
 from __future__ import annotations
 
 import uuid
@@ -11,7 +12,6 @@ from qdrant_client.models import (
     Filter,
     MatchAny,
     MatchValue,
-    NamedVector,
     PointStruct,
     ScoredPoint,
     SparseIndexParams,
@@ -20,8 +20,7 @@ from qdrant_client.models import (
 )
 
 from app.config import settings
-from app.core.chunking.models import Chunk, ChunkType
-
+from app.core.chunking.models import Chunk
 
 DENSE_VECTOR = "dense"
 SPARSE_VECTOR = "sparse"
@@ -62,9 +61,7 @@ class QdrantStore:
                 ),
             },
             sparse_vectors_config={
-                SPARSE_VECTOR: SparseVectorParams(
-                    index=SparseIndexParams(on_disk=False)
-                ),
+                SPARSE_VECTOR: SparseVectorParams(index=SparseIndexParams(on_disk=False)),
             },
         )
 

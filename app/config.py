@@ -1,4 +1,5 @@
 """Application settings — loaded from environment / .env file."""
+
 from __future__ import annotations
 
 import json

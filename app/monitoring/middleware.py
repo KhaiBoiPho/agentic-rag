@@ -1,4 +1,5 @@
 """Prometheus middleware — records HTTP request count + latency per endpoint."""
+
 from __future__ import annotations
 
 import time

@@ -2,9 +2,8 @@
 "in" a project retrieves RAG context across every attached KB at once
 (app/core/retrieval/retriever.py, app/api/v1/chat.py::project_id) instead
 of being limited to a single KB per conversation."""
-from __future__ import annotations
 
-from typing import Optional
+from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
@@ -17,12 +16,12 @@ router = APIRouter()
 
 class ProjectCreate(BaseModel):
     name: str
-    description: Optional[str] = ""
+    description: str | None = ""
 
 
 class ProjectUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
+    name: str | None = None
+    description: str | None = None
 
 
 class ProjectKBsUpdate(BaseModel):
@@ -41,10 +40,13 @@ class ProjectResponse(BaseModel):
 
 def _to_response(project) -> ProjectResponse:
     return ProjectResponse(
-        id=str(project.id), name=project.name, description=project.description or "",
+        id=str(project.id),
+        name=project.name,
+        description=project.description or "",
         kb_ids=[str(kb.id) for kb in project.knowledge_bases],
         kb_names=[kb.name for kb in project.knowledge_bases],
-        created_at=int(project.created_at.timestamp()), updated_at=int(project.updated_at.timestamp()),
+        created_at=int(project.created_at.timestamp()),
+        updated_at=int(project.updated_at.timestamp()),
     )
 
 
@@ -58,7 +60,9 @@ async def list_projects(current_user: CurrentUser):
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 async def create_project(body: ProjectCreate, current_user: CurrentUser):
     repo = ProjectRepository()
-    project = await repo.create(user_id=str(current_user.id), name=body.name, description=body.description or "")
+    project = await repo.create(
+        user_id=str(current_user.id), name=body.name, description=body.description or ""
+    )
     return _to_response(project)
 
 

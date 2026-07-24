@@ -1,4 +1,5 @@
 """Config endpoint — exposes available skills and models to the frontend."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -10,12 +11,13 @@ router = APIRouter()
 _SKILLS_DIR = Path(__file__).parent.parent.parent / "core" / "skills"
 
 _SKILL_META = {
-    "write":  {"label": "Write",      "icon": "✏️",  "description": "Writing & editing assistant"},
-    "learn":  {"label": "Learn",      "icon": "📚",  "description": "Patient tutor for any subject"},
-    "code":   {"label": "Code",       "icon": "</> ", "description": "Senior engineer & code reviewer"},
-    "chill":  {"label": "Chill",      "icon": "😎",  "description": "Casual conversation & ideas"},
-    "life":   {"label": "Life stuff", "icon": "🌱",  "description": "Life coach & practical advisor"},
+    "write": {"label": "Write", "icon": "✏️", "description": "Writing & editing assistant"},
+    "learn": {"label": "Learn", "icon": "📚", "description": "Patient tutor for any subject"},
+    "code": {"label": "Code", "icon": "</> ", "description": "Senior engineer & code reviewer"},
+    "chill": {"label": "Chill", "icon": "😎", "description": "Casual conversation & ideas"},
+    "life": {"label": "Life stuff", "icon": "🌱", "description": "Life coach & practical advisor"},
 }
+
 
 def load_skill_prompt(skill_id: str) -> str | None:
     path = _SKILLS_DIR / f"{skill_id}.md"
@@ -31,5 +33,3 @@ async def get_skills():
         if (_SKILLS_DIR / f"{sid}.md").exists():
             skills.append({"id": sid, **meta})
     return {"skills": skills}
-
-

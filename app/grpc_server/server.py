@@ -1,9 +1,8 @@
 """gRPC server — runs alongside FastAPI on a separate port."""
+
 from __future__ import annotations
 
-import asyncio
 import logging
-from concurrent import futures
 
 import grpc
 from grpc_reflection.v1alpha import reflection
@@ -19,7 +18,7 @@ from app.grpc_server.generated import (
 from app.grpc_server.servicers.chat import ChatServicer
 from app.grpc_server.servicers.document import DocumentServicer
 from app.grpc_server.servicers.research import ResearchServicer
-from app.monitoring.metrics import GRPC_REQUEST_COUNT, GRPC_REQUEST_LATENCY
+from app.monitoring.metrics import GRPC_REQUEST_COUNT
 
 logger = logging.getLogger(__name__)
 

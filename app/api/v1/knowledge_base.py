@@ -1,8 +1,6 @@
 """Knowledge base CRUD endpoints."""
-from __future__ import annotations
 
-import uuid
-from typing import Optional
+from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
@@ -16,7 +14,7 @@ router = APIRouter()
 
 class KBCreate(BaseModel):
     name: str
-    description: Optional[str] = ""
+    description: str | None = ""
 
 
 class KBResponse(BaseModel):
@@ -37,8 +35,11 @@ async def list_kbs(current_user: CurrentUser):
     kbs = await repo.list_system() + await repo.list_by_user(str(current_user.id))
     return [
         KBResponse(
-            id=str(kb.id), name=kb.name, description=kb.description or "",
-            document_count=kb.document_count, created_at=int(kb.created_at.timestamp()),
+            id=str(kb.id),
+            name=kb.name,
+            description=kb.description or "",
+            document_count=kb.document_count,
+            created_at=int(kb.created_at.timestamp()),
             is_system=is_system_kb(str(kb.id)),
         )
         for kb in kbs
@@ -48,10 +49,15 @@ async def list_kbs(current_user: CurrentUser):
 @router.post("", response_model=KBResponse, status_code=status.HTTP_201_CREATED)
 async def create_kb(body: KBCreate, current_user: CurrentUser):
     repo = KnowledgeBaseRepository()
-    kb = await repo.create(user_id=str(current_user.id), name=body.name, description=body.description)
+    kb = await repo.create(
+        user_id=str(current_user.id), name=body.name, description=body.description
+    )
     return KBResponse(
-        id=str(kb.id), name=kb.name, description=kb.description or "",
-        document_count=0, created_at=int(kb.created_at.timestamp()),
+        id=str(kb.id),
+        name=kb.name,
+        description=kb.description or "",
+        document_count=0,
+        created_at=int(kb.created_at.timestamp()),
     )
 
 

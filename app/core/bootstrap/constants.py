@@ -5,6 +5,7 @@ rows (migrations/versions/0003_seed_system_kb.py) and the app-startup
 ingestion task (app/core/bootstrap/seed.py) — they must stay in sync, which
 is why they live here instead of being inlined in both places.
 """
+
 from __future__ import annotations
 
 SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000001"

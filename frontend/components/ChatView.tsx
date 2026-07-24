@@ -299,11 +299,11 @@ export default function ChatView({ conversationId }: { conversationId: string })
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col bg-canvas dark:bg-[#212121]">
       <div ref={listRef} className="flex-1 overflow-y-auto px-4 py-6">
         <div className="mx-auto flex max-w-3xl flex-col gap-5">
           {messages.length === 0 && (
-            <div className="mt-16 text-center text-slate-400">
+            <div className="mt-16 text-center text-ink-mute">
               <div className="mb-2 text-3xl">🏗️</div>
               <p className="text-sm">
                 Hỏi về vật liệu xây dựng, dự toán chi phí, hoặc bật Search / Research để tra cứu trên web.

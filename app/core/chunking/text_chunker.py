@@ -1,4 +1,5 @@
 """Plain text / Markdown chunker — token-based splitting."""
+
 from __future__ import annotations
 
 import re

@@ -10,6 +10,7 @@ Runs two things from the same PDF:
      the material_prices table, which is what the price-lookup tool queries
      for exact answers instead of relying on semantic search.
 """
+
 from __future__ import annotations
 
 import logging
@@ -45,7 +46,12 @@ class PriceExtractionPipeline:
         region = config.get("region", "")
         price_period = config.get("price_period", "")
         if not region:
-            yield {"stage": "error", "error": "region is required for price_extraction mode", "progress": 0.0, "done": True}
+            yield {
+                "stage": "error",
+                "error": "region is required for price_extraction mode",
+                "progress": 0.0,
+                "done": True,
+            }
             return
 
         source_type = classify_source_file(filename)
@@ -66,7 +72,9 @@ class PriceExtractionPipeline:
                 overlap_percent=config.get("chunk_overlap_pct", 15),
                 table_context_size=config.get("table_context_size", 128),
             )
-            chunks = dispatcher.chunk(filename=filename, content=content, document_id=doc_id, kb_id=kb_id)
+            chunks = dispatcher.chunk(
+                filename=filename, content=content, document_id=doc_id, kb_id=kb_id
+            )
         except Exception as exc:
             await self._doc_repo.update_status(doc_id, "error", error=str(exc))
             yield {"stage": "error", "error": str(exc), "progress": 0.0, "done": True}
@@ -76,8 +84,12 @@ class PriceExtractionPipeline:
             yield {"stage": "ocr", "progress": 0.2, "done": False}
             try:
                 from app.core.ingestion.ocr_fallback import ocr_pdf_to_chunks
+
                 chunks = await ocr_pdf_to_chunks(
-                    content, filename, doc_id, kb_id,
+                    content,
+                    filename,
+                    doc_id,
+                    kb_id,
                     chunk_token_num=config.get("chunk_token_num", 512),
                     overlap_percent=config.get("chunk_overlap_pct", 15),
                 )
@@ -85,7 +97,9 @@ class PriceExtractionPipeline:
                 logger.warning("OCR fallback failed doc_id=%s file=%s: %s", doc_id, filename, exc)
 
         for c in chunks:
-            c.metadata.update({"region": region, "source_type": source_type, "price_period": price_period})
+            c.metadata.update(
+                {"region": region, "source_type": source_type, "price_period": price_period}
+            )
 
         oversized_count = sum(1 for c in chunks if c.token_count > MAX_EMBED_TOKENS)
         if oversized_count:
@@ -95,20 +109,26 @@ class PriceExtractionPipeline:
             still_oversized = sum(1 for c in expanded if c.token_count > MAX_EMBED_TOKENS)
             if still_oversized:
                 logger.warning(
-                    "doc_id=%s: %d chunk(s) still exceed %d tokens after table-splitting — dropping "
-                    "them from Qdrant (structured price rows are unaffected, separate extraction path)",
-                    doc_id, still_oversized, MAX_EMBED_TOKENS,
+                    "doc_id=%s: %d chunk(s) still exceed %d tokens after table-splitting — "
+                    "dropping them from Qdrant "
+                    "(structured price rows are unaffected, separate extraction path)",
+                    doc_id,
+                    still_oversized,
+                    MAX_EMBED_TOKENS,
                 )
                 expanded = [c for c in expanded if c.token_count <= MAX_EMBED_TOKENS]
             logger.info(
                 "doc_id=%s: split %d oversized price-table chunk(s) into %d smaller chunks",
-                doc_id, oversized_count, len(expanded) - (len(chunks) - oversized_count),
+                doc_id,
+                oversized_count,
+                len(expanded) - (len(chunks) - oversized_count),
             )
             chunks = expanded
 
         yield {"stage": "chunking", "progress": 0.25, "chunks_total": len(chunks), "done": False}
 
         from app.config import settings
+
         batch_size = settings.embed_batch_size
         embeddings: list[list[float]] = []
         for i in range(0, len(chunks), batch_size):
@@ -158,7 +178,10 @@ class PriceExtractionPipeline:
         if result.warnings:
             logger.warning(
                 "price extraction warnings doc_id=%s filename=%s count=%d sample=%s",
-                doc_id, filename, len(result.warnings), result.warnings[:5],
+                doc_id,
+                filename,
+                len(result.warnings),
+                result.warnings[:5],
             )
         await self._doc_repo.set_metadata(
             doc_id, {"price_row_count": price_row_count, "warning_count": len(result.warnings)}
@@ -168,7 +191,10 @@ class PriceExtractionPipeline:
 
         logger.info(
             "Price ingestion complete doc_id=%s chunks=%d price_rows=%d warnings=%d",
-            doc_id, len(chunks), price_row_count, len(result.warnings),
+            doc_id,
+            len(chunks),
+            price_row_count,
+            len(result.warnings),
         )
         yield {
             "stage": "done",

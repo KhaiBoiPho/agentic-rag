@@ -89,32 +89,32 @@ export default function Composer({
   }
 
   return (
-    <div className="border-t border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
+    <div className="bg-canvas px-4 pb-4 pt-1 dark:bg-[#212121]">
       <div className="mx-auto max-w-3xl">
         <div className="mb-2 flex items-center justify-between">
-          <div className="flex gap-1 rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
+          <div className="flex gap-1 rounded-full bg-gray-100 p-1 dark:bg-slate-800">
             {MODES.map((m) => (
               <button
                 key={m.id}
                 type="button"
                 onClick={() => onModeChange(m.id)}
                 className={clsx(
-                  'rounded-md px-2.5 py-1 text-xs font-medium transition',
+                  'rounded-full px-3 py-1 text-xs font-medium transition',
                   mode === m.id
-                    ? 'bg-white text-brand-700 shadow-sm dark:bg-slate-700 dark:text-brand-300'
-                    : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300',
+                    ? 'bg-white text-ink shadow-sm dark:bg-slate-700 dark:text-white'
+                    : 'text-ink-mute hover:text-ink dark:hover:text-slate-300',
                 )}
               >
                 {m.icon} {m.label}
               </button>
             ))}
           </div>
-          <span className="truncate text-[11px] text-slate-400">{scopeLabel}</span>
+          <span className="truncate text-[11px] text-ink-mute">{scopeLabel}</span>
         </div>
 
         {voiceError && <p className="mb-1 text-xs text-red-500">{voiceError}</p>}
 
-        <div className="flex items-end gap-2">
+        <div className="flex items-end gap-2 rounded-3xl border border-hairline bg-canvas px-3 py-2 shadow-[0_2px_10px_rgba(0,0,0,0.06)] dark:border-slate-700 dark:bg-[#2f2f2f]">
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
@@ -122,7 +122,7 @@ export default function Composer({
             disabled={disabled}
             rows={1}
             placeholder="Nhập câu hỏi… (Enter để gửi, Shift+Enter xuống dòng)"
-            className="max-h-40 flex-1 resize-none rounded-xl border border-slate-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-brand-600 disabled:opacity-60 dark:border-slate-700"
+            className="max-h-40 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-ink outline-none disabled:opacity-60 dark:text-slate-100"
           />
           <button
             type="button"
@@ -130,10 +130,10 @@ export default function Composer({
             disabled={disabled || transcribing}
             title={recording ? 'Dừng ghi âm' : 'Nói'}
             className={clsx(
-              'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border text-lg transition',
+              'flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-base transition',
               recording
-                ? 'animate-pulse border-red-400 bg-red-50 text-red-600 dark:bg-red-900/30'
-                : 'border-slate-300 text-slate-500 hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800',
+                ? 'animate-pulse bg-red-50 text-red-600 dark:bg-red-900/30'
+                : 'text-ink-mute hover:bg-gray-100 dark:hover:bg-slate-700',
             )}
           >
             {transcribing ? '⏳' : '🎙️'}
@@ -142,9 +142,10 @@ export default function Composer({
             type="button"
             onClick={submit}
             disabled={disabled || !text.trim()}
-            className="h-10 shrink-0 rounded-full bg-brand-600 px-4 text-sm font-medium text-white transition hover:bg-brand-700 disabled:opacity-50"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ink text-white transition hover:bg-black disabled:opacity-30 dark:bg-white dark:text-black"
+            title="Gửi"
           >
-            Gửi
+            ↑
           </button>
         </div>
       </div>

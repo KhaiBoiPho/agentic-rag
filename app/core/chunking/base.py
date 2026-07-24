@@ -1,4 +1,5 @@
 """Base chunker — token counting + naive merge algorithm (RAGFlow-inspired)."""
+
 from __future__ import annotations
 
 import re
@@ -195,5 +196,4 @@ class BaseChunker(ABC):
         self.table_context_size = table_context_size
 
     @abstractmethod
-    def chunk(self, filename: str, content: bytes, **kwargs) -> list[Chunk]:
-        ...
+    def chunk(self, filename: str, content: bytes, **kwargs) -> list[Chunk]: ...

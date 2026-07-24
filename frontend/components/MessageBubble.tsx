@@ -36,11 +36,7 @@ function Badge({ message }: { message: ChatMessage }) {
       </span>
     );
   }
-  return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-      Chat thường — không dùng RAG
-    </span>
-  );
+  return null;
 }
 
 export default function MessageBubble({
@@ -56,29 +52,31 @@ export default function MessageBubble({
   const docSources = (message.sources ?? []).filter(isDocSource);
   const webSources = (message.sources ?? []).filter(isWebSource);
 
+  if (isUser) {
+    return (
+      <div className="flex w-full justify-end">
+        <div className="max-w-[70%] rounded-3xl bg-gray-100 px-4 py-2.5 text-sm text-ink dark:bg-slate-800 dark:text-slate-100">
+          <p className="whitespace-pre-wrap break-words">{message.content}</p>
+          {message.viaVoice && <span className="mt-1 block text-[11px] text-ink-mute">🎙️ giọng nói</span>}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className={clsx('flex w-full', isUser ? 'justify-end' : 'justify-start')}>
-      <div className={clsx('max-w-2xl', isUser ? 'items-end' : 'items-start', 'flex flex-col gap-1')}>
-        {!isUser && (
-          <div className="flex items-center gap-2">
-            <Badge message={message} />
-            {message.viaVoice && <span className="text-[11px] text-slate-400">🎙️ giọng nói</span>}
-          </div>
-        )}
-        <div
-          className={clsx(
-            'rounded-2xl px-4 py-2.5 text-sm shadow-sm',
-            isUser
-              ? 'bg-brand-600 text-white'
-              : 'bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100',
-          )}
-        >
+    <div className="flex w-full gap-3">
+      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-ink text-xs text-white">
+        🏗️
+      </div>
+      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+        <Badge message={message} />
+        <div className="text-sm text-ink dark:text-slate-100">
           {message.streaming ? (
             <p className="whitespace-pre-wrap break-words">{message.content || '…'}</p>
           ) : message.content ? (
             <Markdown content={message.content} sources={message.sources} />
           ) : null}
-          {message.error && <p className="text-sm text-red-400">{message.error}</p>}
+          {message.error && <p className="text-sm text-red-500">{message.error}</p>}
         </div>
 
         {message.researchSteps && message.researchSteps.length > 0 && (
@@ -108,17 +106,12 @@ export default function MessageBubble({
         )}
 
         {webSources.length > 0 && (
-          <div className="max-w-xl rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800/60">
-            <p className="mb-1 font-medium text-slate-500">Nguồn</p>
+          <div className="max-w-xl rounded-lg border border-hairline bg-canvas-soft px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800/60">
+            <p className="mb-1 font-medium text-ink-mute">Nguồn</p>
             <ol className="list-decimal space-y-0.5 pl-4">
               {webSources.map((s, i) => (
                 <li key={i}>
-                  <a
-                    href={s.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-brand-600 hover:underline dark:text-brand-400"
-                  >
+                  <a href={s.url} target="_blank" rel="noreferrer" className="text-ink hover:underline dark:text-slate-200">
                     {s.title || s.url}
                   </a>
                 </li>

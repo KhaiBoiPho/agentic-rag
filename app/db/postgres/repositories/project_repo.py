@@ -47,7 +47,9 @@ class ProjectRepository:
             # is actually missing on `project` post-flush.
             return project
 
-    async def rename(self, project_id: str, user_id: str, name: str | None, description: str | None) -> Project | None:
+    async def rename(
+        self, project_id: str, user_id: str, name: str | None, description: str | None
+    ) -> Project | None:
         async with get_session() as s:
             project = await s.get(Project, uuid.UUID(project_id))
             if not project or str(project.user_id) != user_id:

@@ -1,11 +1,11 @@
 """MCP Tool — Web search via Firecrawl."""
+
 from __future__ import annotations
 
 import httpx
 from mcp.types import TextContent, Tool
 
 from app.config import settings
-
 
 SEARCH_TOOL = Tool(
     name="web_search",

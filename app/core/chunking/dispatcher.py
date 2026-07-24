@@ -1,7 +1,6 @@
 """Dispatcher — routes file to the correct chunker based on extension."""
-from __future__ import annotations
 
-import re
+from __future__ import annotations
 
 from app.core.chunking.base import BaseChunker
 from app.core.chunking.docx_chunker import DocxChunker
@@ -25,11 +24,11 @@ class ChunkDispatcher:
             table_context_size=table_context_size,
         )
         self._chunkers: dict[str, BaseChunker] = {
-            "pdf":  PdfChunker(**kwargs),
+            "pdf": PdfChunker(**kwargs),
             "docx": DocxChunker(**kwargs),
-            "doc":  DocxChunker(**kwargs),
-            "txt":  TextChunker(**kwargs),
-            "md":   TextChunker(**kwargs),
+            "doc": DocxChunker(**kwargs),
+            "txt": TextChunker(**kwargs),
+            "md": TextChunker(**kwargs),
             "markdown": TextChunker(**kwargs),
         }
 

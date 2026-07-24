@@ -20,15 +20,25 @@ class UsageTotals:
 
 class UsageRepository:
     async def record(
-        self, user_id: str, model: str, prompt_tokens: int, completion_tokens: int,
-        cost_usd: float, duration_ms: int,
+        self,
+        user_id: str,
+        model: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        cost_usd: float,
+        duration_ms: int,
     ) -> None:
         async with get_session() as s:
-            s.add(UsageRecord(
-                user_id=uuid.UUID(user_id), model=model,
-                prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
-                cost_usd=cost_usd, duration_ms=duration_ms,
-            ))
+            s.add(
+                UsageRecord(
+                    user_id=uuid.UUID(user_id),
+                    model=model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    cost_usd=cost_usd,
+                    duration_ms=duration_ms,
+                )
+            )
 
     async def totals(self, user_id: str) -> UsageTotals:
         async with get_session() as s:
@@ -43,8 +53,11 @@ class UsageRepository:
             )
             cost, duration, count, ptok, ctok = result.one()
             return UsageTotals(
-                total_cost_usd=float(cost), total_duration_ms=int(duration), total_messages=int(count),
-                total_prompt_tokens=int(ptok), total_completion_tokens=int(ctok),
+                total_cost_usd=float(cost),
+                total_duration_ms=int(duration),
+                total_messages=int(count),
+                total_prompt_tokens=int(ptok),
+                total_completion_tokens=int(ctok),
             )
 
     async def recent(self, user_id: str, limit: int = 50) -> list[UsageRecord]:

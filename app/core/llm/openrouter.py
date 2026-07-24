@@ -5,17 +5,18 @@ the OpenRouter base URL. HTTP chunks from /chat/completions SSE are
 re-yielded as async generator tokens — the gRPC servicer then wraps those
 into gRPC server-stream messages.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 import httpx
 from openai import AsyncOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.config import settings
-from app.monitoring.metrics import LLM_TOKEN_COUNT, LLM_REQUEST_LATENCY
+from app.monitoring.metrics import LLM_REQUEST_LATENCY, LLM_TOKEN_COUNT
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ class OpenRouterClient:
     ) -> AsyncGenerator[str, None]:
         """Yield token strings from OpenRouter SSE stream."""
         import time
+
         model = model or settings.openrouter_chat_model
         t0 = time.perf_counter()
         total_tokens = 0
@@ -129,14 +131,17 @@ class OpenRouterClient:
             logger.error(
                 "Embedding failed (model=%s): %s — check OPENROUTER_EMBED_MODEL in .env. "
                 "Supported models: openai/text-embedding-3-small, openai/text-embedding-3-large",
-                settings.openrouter_embed_model, exc,
+                settings.openrouter_embed_model,
+                exc,
             )
             raise ValueError(
                 f"Embedding model '{settings.openrouter_embed_model}' not supported. "
                 "Set OPENROUTER_EMBED_MODEL=openai/text-embedding-3-small in .env"
             ) from exc
 
-    async def embed_batch(self, texts: list[str], batch_size: int | None = None) -> list[list[float]]:
+    async def embed_batch(
+        self, texts: list[str], batch_size: int | None = None
+    ) -> list[list[float]]:
         batch_size = batch_size or settings.embed_batch_size
         result: list[list[float]] = []
         for i in range(0, len(texts), batch_size):
@@ -198,11 +203,27 @@ class OpenRouterClient:
 
     def _wav_header(self, pcm_byte_len: int) -> bytes:
         import struct
+
         byte_rate = self._PCM_SAMPLE_RATE * self._PCM_CHANNELS * self._PCM_BITS // 8
         block_align = self._PCM_CHANNELS * self._PCM_BITS // 8
-        return b"RIFF" + struct.pack("<I", 36 + pcm_byte_len) + b"WAVE" + b"fmt " + struct.pack(
-            "<IHHIIHH", 16, 1, self._PCM_CHANNELS, self._PCM_SAMPLE_RATE, byte_rate, block_align, self._PCM_BITS
-        ) + b"data" + struct.pack("<I", pcm_byte_len)
+        return (
+            b"RIFF"
+            + struct.pack("<I", 36 + pcm_byte_len)
+            + b"WAVE"
+            + b"fmt "
+            + struct.pack(
+                "<IHHIIHH",
+                16,
+                1,
+                self._PCM_CHANNELS,
+                self._PCM_SAMPLE_RATE,
+                byte_rate,
+                block_align,
+                self._PCM_BITS,
+            )
+            + b"data"
+            + struct.pack("<I", pcm_byte_len)
+        )
 
     async def tts_stream(self, text: str, voice: str = "alloy") -> AsyncGenerator[bytes, None]:
         """Yield one complete WAV file's bytes (not per-chunk audio — the
@@ -244,7 +265,7 @@ class OpenRouterClient:
                 async for line in resp.aiter_lines():
                     if not line.startswith("data: "):
                         continue
-                    payload = line[len("data: "):]
+                    payload = line[len("data: ") :]
                     if payload == "[DONE]":
                         break
                     try:

@@ -11,6 +11,7 @@ map instead of guessing, surfacing them as warnings. A wrong material/price
 match here produces a wrong construction cost downstream, so silence on
 uncertain rows is the safer failure mode than a best-effort guess.
 """
+
 from __future__ import annotations
 
 import re
@@ -35,7 +36,11 @@ def classify_source_file(filename: str) -> str:
     stem = filename.rsplit("/", 1)[-1]
     if _ANNEX_RE.search(stem):
         return "official_annex"
-    if _ANNOUNCEMENT_RE.search(stem) and "công ty" not in stem.lower() and "cong ty" not in stem.lower():
+    if (
+        _ANNOUNCEMENT_RE.search(stem)
+        and "công ty" not in stem.lower()
+        and "cong ty" not in stem.lower()
+    ):
         return "official_announcement"
     return "vendor_quote"
 
@@ -43,19 +48,32 @@ def classify_source_file(filename: str) -> str:
 # ─── Header column detection ───────────────────────────────────────────────
 
 _NAME_KEYWORDS = [
-    "tên vật liệu", "ten vat lieu", "loại vật liệu", "tên hàng", "quy cách",
-    "danh mục vật liệu", "danh mục giá vật liệu", "danh mục",
+    "tên vật liệu",
+    "ten vat lieu",
+    "loại vật liệu",
+    "tên hàng",
+    "quy cách",
+    "danh mục vật liệu",
+    "danh mục giá vật liệu",
+    "danh mục",
 ]
 _UNIT_KEYWORDS = ["đơn vị", "don vi", "đvt"]
 _CATEGORY_KEYWORDS = ["nhóm vật liệu", "nhom vat lieu"]
 _PRICE_AT_SOURCE_KEYWORDS = ["tại nơi sản xuất", "tai noi san xuat", "tại mỏ", "tai mo"]
 _PRICE_AT_SITE_KEYWORDS = ["tại chân công trình", "tai chan cong trinh", "đến chân công trình"]
 _PRICE_GENERIC_KEYWORDS = [
-    "giá bán", "gia ban", "đơn giá", "don gia",
-    "giá công bố", "gia cong bo", "công bố giá", "cong bo gia",
+    "giá bán",
+    "gia ban",
+    "đơn giá",
+    "don gia",
+    "giá công bố",
+    "gia cong bo",
+    "công bố giá",
+    "cong bo gia",
     # e.g. "Giá quý II/2026" — a bare quarter/period label used as the price
     # column header in some annexes instead of "giá bán"/"đơn giá".
-    "giá quý", "gia quy",
+    "giá quý",
+    "gia quy",
 ]
 
 
@@ -151,7 +169,9 @@ def _detect_header(table: list[list[str | None]]) -> tuple[int, _ColumnMapping] 
     has started marks the end of the header block.
     """
     header_idx = None
-    name_col = unit_col = category_col = price_site_col = price_source_col = price_generic_col = None
+    name_col = unit_col = category_col = price_site_col = price_source_col = price_generic_col = (
+        None
+    )
     for i, raw_row in enumerate(table[:6]):
         cells = [c or "" for c in raw_row]
         # Decorative title/subtitle rows are typically one long cell spanning
@@ -192,7 +212,9 @@ def _detect_header(table: list[list[str | None]]) -> tuple[int, _ColumnMapping] 
     if header_idx + 1 < len(table) and _is_legend_row(table[header_idx + 1]):
         header_idx += 1
 
-    mapping = _ColumnMapping(name_col, unit_col, category_col, price_site_col, price_source_col, price_generic_col)
+    mapping = _ColumnMapping(
+        name_col, unit_col, category_col, price_site_col, price_source_col, price_generic_col
+    )
     return header_idx, mapping
 
 
@@ -205,7 +227,9 @@ def _parse_data_rows(
     warnings: list[str] = []
     name_col, unit_col, category_col = mapping.name_col, mapping.unit_col, mapping.category_col
     price_site_col, price_source_col, price_generic_col = (
-        mapping.price_site_col, mapping.price_source_col, mapping.price_generic_col,
+        mapping.price_site_col,
+        mapping.price_source_col,
+        mapping.price_generic_col,
     )
 
     for row in data_rows:
@@ -217,7 +241,11 @@ def _parse_data_rows(
         unit = cells[unit_col].strip()
 
         non_empty = [c.strip() for c in cells if c and c.strip()]
-        cat_cell = cells[category_col].strip() if category_col is not None and category_col < len(cells) else ""
+        cat_cell = (
+            cells[category_col].strip()
+            if category_col is not None and category_col < len(cells)
+            else ""
+        )
 
         # Sparse "group header" row: material name column is empty but the
         # category column (or, less commonly, the name column itself) carries
@@ -242,9 +270,14 @@ def _parse_data_rows(
             if price is not None:
                 rows.append(
                     MaterialPriceRow(
-                        region="", material_category=material_category, material_name=name,
-                        unit=unit, price_ex_vat=price, price_basis="tai_mo",
-                        source_type="", raw_row_text=" | ".join(non_empty),
+                        region="",
+                        material_category=material_category,
+                        material_name=name,
+                        unit=unit,
+                        price_ex_vat=price,
+                        price_basis="tai_mo",
+                        source_type="",
+                        raw_row_text=" | ".join(non_empty),
                     )
                 )
                 priced_any = True
@@ -253,9 +286,14 @@ def _parse_data_rows(
             if price is not None:
                 rows.append(
                     MaterialPriceRow(
-                        region="", material_category=material_category, material_name=name,
-                        unit=unit, price_ex_vat=price, price_basis="tai_chan_cong_trinh",
-                        source_type="", raw_row_text=" | ".join(non_empty),
+                        region="",
+                        material_category=material_category,
+                        material_name=name,
+                        unit=unit,
+                        price_ex_vat=price,
+                        price_basis="tai_chan_cong_trinh",
+                        source_type="",
+                        raw_row_text=" | ".join(non_empty),
                     )
                 )
                 priced_any = True
@@ -264,9 +302,14 @@ def _parse_data_rows(
             if price is not None:
                 rows.append(
                     MaterialPriceRow(
-                        region="", material_category=material_category, material_name=name,
-                        unit=unit, price_ex_vat=price, price_basis="khong_ro",
-                        source_type="", raw_row_text=" | ".join(non_empty),
+                        region="",
+                        material_category=material_category,
+                        material_name=name,
+                        unit=unit,
+                        price_ex_vat=price,
+                        price_basis="khong_ro",
+                        source_type="",
+                        raw_row_text=" | ".join(non_empty),
                     )
                 )
                 priced_any = True
@@ -286,7 +329,9 @@ def parse_price_table(table: list[list[str | None]]) -> TableParseResult:
 
     detected = _detect_header(table)
     if detected is None:
-        return TableParseResult([], ["Không nhận diện được header bảng (thiếu cột tên vật liệu/đơn vị) — bỏ qua bảng."])
+        return TableParseResult(
+            [], ["Không nhận diện được header bảng (thiếu cột tên vật liệu/đơn vị) — bỏ qua bảng."]
+        )
 
     header_end, mapping = detected
     rows, warnings, _ = _parse_data_rows(table[header_end + 1 :], mapping, "")
@@ -336,7 +381,9 @@ def extract_price_rows(content: bytes, region: str, source_type: str) -> TablePa
                     )
                     continue
 
-                rows, warnings, current_category = _parse_data_rows(data_rows, last_mapping, current_category)
+                rows, warnings, current_category = _parse_data_rows(
+                    data_rows, last_mapping, current_category
+                )
                 for r in rows:
                     r.region = region
                     r.source_type = source_type

@@ -1,14 +1,15 @@
 """gRPC DocumentService — streams ingestion progress back to client."""
+
 from __future__ import annotations
 
 import logging
 import uuid
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 import grpc
 
-from app.grpc_server.generated import document_pb2, document_pb2_grpc
 from app.core.ingestion.pipeline import IngestionPipeline
+from app.grpc_server.generated import document_pb2, document_pb2_grpc
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,7 @@ class DocumentServicer(document_pb2_grpc.DocumentServiceServicer):
         context: grpc.aio.ServicerContext,
     ) -> document_pb2.DocumentListResponse:
         from app.db.postgres.repositories.document_repo import DocumentRepository
+
         repo = DocumentRepository()
         docs, total = await repo.list_by_kb(
             kb_id=request.kb_id,
@@ -93,6 +95,7 @@ class DocumentServicer(document_pb2_grpc.DocumentServiceServicer):
     ) -> document_pb2.DeleteDocumentResponse:
         from app.db.postgres.repositories.document_repo import DocumentRepository
         from app.db.qdrant.client import QdrantStore
+
         repo = DocumentRepository()
         qdrant = QdrantStore()
         try:

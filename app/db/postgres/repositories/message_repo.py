@@ -10,6 +10,7 @@ that retrieval is a single indexed lookup (see the composite index on
 the browser). ensure_conversation() upserts the parent row so the Message
 FK holds even though the conversation was "created" client-side.
 """
+
 from __future__ import annotations
 
 import json
@@ -24,7 +25,11 @@ from app.db.postgres.models import Conversation, Message
 
 class MessageRepository:
     async def ensure_conversation(
-        self, conversation_id: str, user_id: str, kb_id: str | None = None, title: str = "",
+        self,
+        conversation_id: str,
+        user_id: str,
+        kb_id: str | None = None,
+        title: str = "",
     ) -> None:
         """Create the conversation row if it doesn't exist yet (no-op if it
         does) — needed before inserting messages (FK), since conversations
@@ -43,15 +48,21 @@ class MessageRepository:
             await s.execute(stmt)
 
     async def add(
-        self, conversation_id: str, role: str, content: str, sources: list | None = None,
+        self,
+        conversation_id: str,
+        role: str,
+        content: str,
+        sources: list | None = None,
     ) -> None:
         async with get_session() as s:
-            s.add(Message(
-                conversation_id=uuid.UUID(conversation_id),
-                role=role,
-                content=content,
-                sources=json.dumps(sources, ensure_ascii=False) if sources else None,
-            ))
+            s.add(
+                Message(
+                    conversation_id=uuid.UUID(conversation_id),
+                    role=role,
+                    content=content,
+                    sources=json.dumps(sources, ensure_ascii=False) if sources else None,
+                )
+            )
 
     async def get_recent(self, conversation_id: str, limit: int = 10) -> list[dict]:
         """Last `limit` messages for the conversation, oldest-first (ready to

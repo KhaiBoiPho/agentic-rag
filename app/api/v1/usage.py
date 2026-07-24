@@ -3,11 +3,11 @@
 Token counts are real; cost is an estimate against a static per-model price
 table (app/core/usage/pricing.py), not pulled live from OpenRouter — see
 UsageRecord's docstring in app/db/postgres/models.py for why."""
+
 from __future__ import annotations
 
-from pydantic import BaseModel
-
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 from app.api.deps import CurrentUser
 from app.db.postgres.repositories.usage_repo import UsageRepository
@@ -57,14 +57,22 @@ async def get_usage(current_user: CurrentUser):
         total_messages=totals.total_messages,
         total_prompt_tokens=totals.total_prompt_tokens,
         total_completion_tokens=totals.total_completion_tokens,
-        avg_duration_ms=(totals.total_duration_ms / totals.total_messages) if totals.total_messages else 0.0,
-        avg_cost_usd=(totals.total_cost_usd / totals.total_messages) if totals.total_messages else 0.0,
+        avg_duration_ms=(totals.total_duration_ms / totals.total_messages)
+        if totals.total_messages
+        else 0.0,
+        avg_cost_usd=(totals.total_cost_usd / totals.total_messages)
+        if totals.total_messages
+        else 0.0,
         daily=[DailyUsage(date=d, cost_usd=c, messages=n) for d, c, n in daily],
         history=[
             UsageRecordResponse(
-                id=str(r.id), model=r.model, prompt_tokens=r.prompt_tokens,
-                completion_tokens=r.completion_tokens, cost_usd=float(r.cost_usd),
-                duration_ms=r.duration_ms, created_at=int(r.created_at.timestamp()),
+                id=str(r.id),
+                model=r.model,
+                prompt_tokens=r.prompt_tokens,
+                completion_tokens=r.completion_tokens,
+                cost_usd=float(r.cost_usd),
+                duration_ms=r.duration_ms,
+                created_at=int(r.created_at.timestamp()),
             )
             for r in history
         ],

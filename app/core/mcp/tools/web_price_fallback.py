@@ -12,6 +12,7 @@ Requires a real FIRECRAWL_API_KEY (app/config.py) — with the placeholder
 value shipped in .env.example this silently returns no result (Firecrawl
 401s), same failure mode as the existing /api/v1/search endpoint.
 """
+
 from __future__ import annotations
 
 import logging
@@ -27,7 +28,8 @@ _REGION_LABELS = {"HN": "Hà Nội", "DN": "Đà Nẵng", "HCM": "TP. Hồ Chí 
 
 
 async def search_web_price(
-    material_desc: str, region: str,
+    material_desc: str,
+    region: str,
 ) -> tuple[float | None, str | None, str | None]:
     """Returns (price_vnd, source_url, source_title), or (None, None, None)
     if nothing usable was found (missing/invalid API key, no results, or
@@ -48,7 +50,9 @@ async def search_web_price(
                 json={"query": query, "limit": 3},
             )
         if resp.status_code != 200:
-            logger.warning("web price fallback: Firecrawl returned %s for %r", resp.status_code, query)
+            logger.warning(
+                "web price fallback: Firecrawl returned %s for %r", resp.status_code, query
+            )
             return None, None, None
         results = resp.json().get("data", [])
     except Exception as exc:
@@ -63,24 +67,28 @@ async def search_web_price(
     title = top.get("title", url)
     # Combine the top few hits' title+description so a price shows up even if
     # the very first snippet omits it (no scraped body to fall back on now).
-    content = "\n".join(
-        f"{r.get('title', '')} — {r.get('description', '')}" for r in results[:3]
-    )[:3000].strip()
+    content = "\n".join(f"{r.get('title', '')} — {r.get('description', '')}" for r in results[:3])[
+        :3000
+    ].strip()
     if not content:
         return None, None, None
 
     from app.core.llm.openrouter import OpenRouterClient
 
     prompt = (
-        f"Trích xuất đơn giá (VNĐ) cho \"{material_desc}\" tại {region_label} từ đoạn văn bản web dưới đây.\n\n"
+        f'Trích xuất đơn giá (VNĐ) cho "{material_desc}" tại {region_label} '
+        "từ đoạn văn bản web dưới đây.\n\n"
         f"{content}\n\n"
         "Chỉ trả lời bằng SỐ NGUYÊN (đơn vị đồng, không dấu phẩy/chấm phân cách, "
-        "không kèm chữ), hoặc trả lời KHONG_TIM_THAY nếu đoạn văn bản không có giá rõ ràng cho đúng vật liệu này."
+        "không kèm chữ), hoặc trả lời KHONG_TIM_THAY nếu đoạn văn bản "
+        "không có giá rõ ràng cho đúng vật liệu này."
     )
     try:
         resp_text = await OpenRouterClient().chat(
             messages=[{"role": "user", "content": prompt}],
-            model="openai/gpt-4o-mini", temperature=0.0, max_tokens=20,
+            model="openai/gpt-4o-mini",
+            temperature=0.0,
+            max_tokens=20,
         )
         digits = re.sub(r"[^\d]", "", resp_text.strip())
         price = float(digits) if digits and "KHONG_TIM_THAY" not in resp_text else None

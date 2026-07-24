@@ -1,4 +1,5 @@
 """Node 1 — Expand the user prompt into multiple search queries."""
+
 from __future__ import annotations
 
 import json
@@ -32,7 +33,9 @@ async def prompt_expander_node(state: ResearchState) -> dict:
     n = min(state["config"].get("max_search_results", 10), 4)
 
     context = (state["config"].get("context") or "").strip()
-    context_block = f"\nConversation so far (for resolving references):\n{context}\n" if context else ""
+    context_block = (
+        f"\nConversation so far (for resolving references):\n{context}\n" if context else ""
+    )
     prompt = EXPAND_PROMPT.format(query=query, n=n, context_block=context_block)
     response = await _llm.chat(
         messages=[{"role": "user", "content": prompt}],

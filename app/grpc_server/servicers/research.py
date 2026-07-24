@@ -1,12 +1,13 @@
 """gRPC ResearchService — streams 6-node LangGraph deep research progress."""
+
 from __future__ import annotations
 
 import logging
 
 import grpc
 
-from app.grpc_server.generated import research_pb2, research_pb2_grpc
 from app.core.research.graph import DeepResearchGraph
+from app.grpc_server.generated import research_pb2, research_pb2_grpc
 
 logger = logging.getLogger(__name__)
 

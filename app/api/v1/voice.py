@@ -1,4 +1,5 @@
 """Voice endpoints — STT (local Whisper) + TTS (OpenRouter) streaming."""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, UploadFile
@@ -21,6 +22,7 @@ class TTSRequest(BaseModel):
 @router.post("/tts/stream")
 async def tts_stream(body: TTSRequest, current_user: CurrentUser):
     """Stream TTS audio bytes (MP3) via OpenRouter."""
+
     async def audio_gen():
         async for chunk in _tts.stream(text=body.text, voice=body.voice):
             yield chunk

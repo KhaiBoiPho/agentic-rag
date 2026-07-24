@@ -3,6 +3,7 @@
 See app/core/voice/local_whisper.py for the model loading/inference
 details and why "base" on CPU is the right default for this project.
 """
+
 from __future__ import annotations
 
 from app.core.voice.local_whisper import LocalWhisperService

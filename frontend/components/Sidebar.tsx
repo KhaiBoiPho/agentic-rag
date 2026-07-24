@@ -40,41 +40,43 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="flex h-full w-72 shrink-0 flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-      <div className="flex items-center gap-2 px-4 py-4">
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-600 text-white">🏗️</div>
+    <aside className="flex h-full w-72 shrink-0 flex-col bg-sidebar text-sidebar-text">
+      <div className="flex items-center gap-2 px-3 py-3">
+        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-base">🏗️</div>
         <div className="text-sm font-semibold leading-tight">
           Agentic RAG
-          <div className="text-xs font-normal text-slate-500">Vật liệu xây dựng</div>
+          <div className="text-xs font-normal text-sidebar-mute">Vật liệu xây dựng</div>
         </div>
       </div>
 
-      <button
-        onClick={newChat}
-        className="mx-4 mb-2 rounded-full bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
-      >
-        + Trò chuyện mới
-      </button>
+      <div className="px-3">
+        <button
+          onClick={newChat}
+          className="flex w-full items-center gap-2 rounded-lg border border-sidebar-border px-3 py-2 text-sm font-medium transition hover:bg-sidebar-hover"
+        >
+          <span className="text-base leading-none">＋</span> Trò chuyện mới
+        </button>
+      </div>
 
-      <nav className="px-2">
+      <nav className="mt-2 px-2">
         {NAV.map((item) => (
           <Link
             key={item.href}
             href={item.href}
             className={clsx(
-              'flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition',
+              'flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition',
               pathname === item.href || pathname.startsWith(item.href + '/')
-                ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300'
-                : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800',
+                ? 'bg-sidebar-active text-white'
+                : 'text-sidebar-text/90 hover:bg-sidebar-hover',
             )}
           >
-            <span>{item.icon}</span>
+            <span className="text-[15px]">{item.icon}</span>
             {item.label}
           </Link>
         ))}
       </nav>
 
-      <div className="mt-4 flex-1 overflow-y-auto px-4 pb-4">
+      <div className="mt-4 flex-1 overflow-y-auto px-3 pb-4">
         <SidebarSection title="Phạm vi RAG">
           <button
             onClick={() => {
@@ -82,10 +84,10 @@ export default function Sidebar() {
               setActiveProject(null);
             }}
             className={clsx(
-              'block w-full truncate rounded-md px-2 py-1 text-left text-xs',
+              'block w-full truncate rounded-md px-2 py-1.5 text-left text-xs',
               !activeKbId && !activeProjectId
-                ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300'
-                : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800',
+                ? 'bg-sidebar-active text-white'
+                : 'text-sidebar-mute hover:bg-sidebar-hover',
             )}
           >
             Không dùng RAG (chat thường)
@@ -95,10 +97,10 @@ export default function Sidebar() {
               key={p.id}
               onClick={() => setActiveProject(p.id)}
               className={clsx(
-                'block w-full truncate rounded-md px-2 py-1 text-left text-xs',
+                'block w-full truncate rounded-md px-2 py-1.5 text-left text-xs',
                 activeProjectId === p.id
-                  ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300'
-                  : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800',
+                  ? 'bg-sidebar-active text-white'
+                  : 'text-sidebar-mute hover:bg-sidebar-hover',
               )}
               title={p.name}
             >
@@ -110,10 +112,10 @@ export default function Sidebar() {
               key={kb.id}
               onClick={() => setActiveKb(kb.id)}
               className={clsx(
-                'block w-full truncate rounded-md px-2 py-1 text-left text-xs',
+                'block w-full truncate rounded-md px-2 py-1.5 text-left text-xs',
                 activeKbId === kb.id
-                  ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300'
-                  : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800',
+                  ? 'bg-sidebar-active text-white'
+                  : 'text-sidebar-mute hover:bg-sidebar-hover',
               )}
               title={kb.name}
             >
@@ -124,17 +126,17 @@ export default function Sidebar() {
 
         <SidebarSection title="Cuộc trò chuyện gần đây">
           {conversations.length === 0 && (
-            <p className="px-2 text-xs text-slate-400">Chưa có cuộc trò chuyện nào</p>
+            <p className="px-2 text-xs text-sidebar-mute">Chưa có cuộc trò chuyện nào</p>
           )}
           {conversations.map((c) => (
             <Link
               key={c.id}
               href={`/chat/${c.id}`}
               className={clsx(
-                'block truncate rounded-md px-2 py-1 text-xs',
+                'block truncate rounded-md px-2 py-1.5 text-xs',
                 pathname === `/chat/${c.id}`
-                  ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300'
-                  : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800',
+                  ? 'bg-sidebar-active text-white'
+                  : 'text-sidebar-mute hover:bg-sidebar-hover',
               )}
               title={c.title}
             >
@@ -144,11 +146,11 @@ export default function Sidebar() {
         </SidebarSection>
       </div>
 
-      <div className="flex items-center justify-between border-t border-slate-200 px-4 py-3 text-xs text-slate-500 dark:border-slate-800">
+      <div className="flex items-center justify-between border-t border-sidebar-border px-4 py-3 text-xs text-sidebar-mute">
         <span className="truncate" title={email ?? undefined}>
           {email ?? 'Người dùng'}
         </span>
-        <button onClick={logout} className="font-medium text-red-500 hover:underline">
+        <button onClick={logout} className="font-medium text-sidebar-text hover:underline">
           Đăng xuất
         </button>
       </div>
@@ -159,7 +161,7 @@ export default function Sidebar() {
 function SidebarSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="mb-4">
-      <div className="mb-1 px-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{title}</div>
+      <div className="mb-1 px-2 text-[11px] font-semibold uppercase tracking-wide text-sidebar-mute">{title}</div>
       <div className="space-y-0.5">{children}</div>
     </div>
   );

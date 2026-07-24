@@ -2,6 +2,7 @@
 
 Runs as an SSE MCP server alongside FastAPI on /mcp path.
 """
+
 from __future__ import annotations
 
 import logging
@@ -47,6 +48,7 @@ async def call_tool(name: str, arguments: dict) -> CallToolResult:
     except Exception as exc:
         logger.exception("MCP tool %s failed", name)
         from mcp.types import TextContent
+
         return CallToolResult(
             content=[TextContent(type="text", text=f"Error: {exc}")],
             isError=True,

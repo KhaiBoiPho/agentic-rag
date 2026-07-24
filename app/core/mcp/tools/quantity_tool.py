@@ -4,6 +4,7 @@ Thin dispatch wrapper over app/core/construction/formulas.py. The actual
 arithmetic is plain Python (see that module's docstring for why) — this
 tool file only validates input shape and formats the result.
 """
+
 from __future__ import annotations
 
 import json
@@ -23,7 +24,15 @@ QUANTITY_TOOL = Tool(
         "properties": {
             "work_type": {
                 "type": "string",
-                "enum": ["concrete", "rebar_geometry", "rebar_bbs", "masonry_wall", "plaster", "tiling", "paint"],
+                "enum": [
+                    "concrete",
+                    "rebar_geometry",
+                    "rebar_bbs",
+                    "masonry_wall",
+                    "plaster",
+                    "tiling",
+                    "paint",
+                ],
             },
             "params": {
                 "type": "object",
@@ -31,7 +40,8 @@ QUANTITY_TOOL = Tool(
                     "Tham số theo work_type. concrete: {volume_m3, mix_grade?, ready_mix?}. "
                     "rebar_geometry: {diameter_mm, total_length_m}. "
                     "rebar_bbs: {bar_schedule: [{diameter_mm, count, length_m}]}. "
-                    "masonry_wall: {length_m, height_m, thickness_m, openings_area_m2?, brick_type?}. "
+                    "masonry_wall: {length_m, height_m, thickness_m, "
+                    "openings_area_m2?, brick_type?}. "
                     "plaster: {area_m2, thickness_mm?}. "
                     "tiling: {area_m2, tile_size_m2?, waste_pct?}. "
                     "paint: {area_m2, coats?, coverage_m2_per_liter?}."

@@ -7,9 +7,9 @@ Strategy (RAGFlow-inspired):
   4. Apply naive_merge to text sections, keep tables as standalone chunks.
   5. Attach table_context_size tokens of surrounding text to each table chunk.
 """
+
 from __future__ import annotations
 
-import re
 from io import BytesIO
 
 import fitz  # PyMuPDF
@@ -61,20 +61,24 @@ class PdfChunker(BaseChunker):
             page_items: list[dict] = []
 
             for block in text_by_page.get(page_idx, []):
-                page_items.append({
-                    "page": page_idx,
-                    "y": block["y"],
-                    "text": block["text"],
-                    "chunk_type": ChunkType.TEXT,
-                })
+                page_items.append(
+                    {
+                        "page": page_idx,
+                        "y": block["y"],
+                        "text": block["text"],
+                        "chunk_type": ChunkType.TEXT,
+                    }
+                )
 
             for tbl in table_by_page.get(page_idx, []):
-                page_items.append({
-                    "page": page_idx,
-                    "y": tbl["y"],
-                    "text": tbl["text"],
-                    "chunk_type": ChunkType.TABLE,
-                })
+                page_items.append(
+                    {
+                        "page": page_idx,
+                        "y": tbl["y"],
+                        "text": tbl["text"],
+                        "chunk_type": ChunkType.TABLE,
+                    }
+                )
 
             # sort by vertical position within each page
             page_items.sort(key=lambda x: x["y"])
@@ -116,9 +120,7 @@ class PdfChunker(BaseChunker):
         html = ["<table>"]
         for i, row in enumerate(rows):
             tag = "th" if i == 0 else "td"
-            cells = "".join(
-                f"<{tag}>{str(cell or '').strip()}</{tag}>" for cell in row
-            )
+            cells = "".join(f"<{tag}>{str(cell or '').strip()}</{tag}>" for cell in row)
             html.append(f"<tr>{cells}</tr>")
         html.append("</table>")
         return "\n".join(html)
@@ -140,11 +142,13 @@ class PdfChunker(BaseChunker):
                 overlap_percent=self.overlap_percent,
             )
             for t in merged:
-                result.append({
-                    "text": t,
-                    "chunk_type": ChunkType.TEXT,
-                    "page": text_meta.get("page", 0),
-                })
+                result.append(
+                    {
+                        "text": t,
+                        "chunk_type": ChunkType.TEXT,
+                        "page": text_meta.get("page", 0),
+                    }
+                )
             text_buffer.clear()
 
         for item in items:

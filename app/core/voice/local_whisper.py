@@ -9,12 +9,12 @@ a record-then-send flow (not live streaming). Switch to GPU later by
 setting WHISPER_DEVICE=cuda + WHISPER_COMPUTE_TYPE=float16 — no code change
 needed, only .env and running on a CUDA-capable host.
 """
+
 from __future__ import annotations
 
 import asyncio
 import io
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -22,14 +22,14 @@ logger = logging.getLogger(__name__)
 class LocalWhisperService:
     """Singleton — model is loaded once and reused across requests."""
 
-    _instance: Optional["LocalWhisperService"] = None
+    _instance: LocalWhisperService | None = None
 
     def __init__(self) -> None:
         self._model = None
         self._ready = False
 
     @classmethod
-    def get(cls) -> "LocalWhisperService":
+    def get(cls) -> LocalWhisperService:
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
@@ -37,11 +37,14 @@ class LocalWhisperService:
     def load(self) -> None:
         """Load the model synchronously — call once at startup in a thread."""
         from faster_whisper import WhisperModel
+
         from app.config import settings
 
         logger.info(
             "Loading local Whisper model=%s device=%s compute_type=%s",
-            settings.whisper_model_size, settings.whisper_device, settings.whisper_compute_type,
+            settings.whisper_model_size,
+            settings.whisper_device,
+            settings.whisper_compute_type,
         )
         self._model = WhisperModel(
             settings.whisper_model_size,
@@ -64,9 +67,14 @@ class LocalWhisperService:
         segments = list(segments)
         text = "".join(seg.text for seg in segments).strip()
         logger.info(
-            "whisper transcribe: input_bytes=%d duration=%.1fs lang=%s(p=%.2f) segments=%d chars=%d",
-            len(audio_bytes), info.duration, info.language, info.language_probability,
-            len(segments), len(text),
+            "whisper transcribe: input_bytes=%d duration=%.1fs "
+            "lang=%s(p=%.2f) segments=%d chars=%d",
+            len(audio_bytes),
+            info.duration,
+            info.language,
+            info.language_probability,
+            len(segments),
+            len(text),
         )
         return text
 

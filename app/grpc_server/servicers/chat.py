@@ -1,4 +1,5 @@
 """gRPC ChatService — bridges OpenRouter SSE stream → gRPC server-stream."""
+
 from __future__ import annotations
 
 import logging
@@ -6,10 +7,9 @@ import uuid
 
 import grpc
 
-from app.grpc_server.generated import chat_pb2, chat_pb2_grpc
 from app.core.llm.openrouter import OpenRouterClient
 from app.core.retrieval.retriever import Retriever
-from app.db.postgres.repositories.user_repo import UserRepository
+from app.grpc_server.generated import chat_pb2, chat_pb2_grpc
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ class ChatServicer(chat_pb2_grpc.ChatServiceServicer):
                     for c in chunks
                 ]
                 context_text = "\n\n".join(
-                    f"[Source {i+1}]: {c.content}" for i, c in enumerate(chunks)
+                    f"[Source {i + 1}]: {c.content}" for i, c in enumerate(chunks)
                 )
             else:
                 context_text = ""

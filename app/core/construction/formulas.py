@@ -9,6 +9,7 @@ Coverage is deliberately limited to the chapters most relevant to a typical
 (cốp pha, chống thấm, mái, trần, cửa, kết cấu thép, MEP, hạ tầng) are out of
 scope for now and would follow the same pattern if needed later.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -18,7 +19,7 @@ from dataclasses import dataclass, field
 class QuantityResult:
     work_type: str
     quantities: dict[str, float]  # material_name -> quantity
-    units: dict[str, str]         # material_name -> unit
+    units: dict[str, str]  # material_name -> unit
     assumptions: list[str] = field(default_factory=list)
 
 
@@ -67,11 +68,12 @@ def concrete(volume_m3: float, mix_grade: str = "M250", ready_mix: bool = True) 
 
 # ─── Chương 17 — Cốt thép ───────────────────────────────────────────────────
 
+
 def rebar_unit_weight_kg_per_m(diameter_mm: float) -> float:
     """w ≈ d² / 162 (kg/m), d tính bằng milimét — công thức gần đúng chuẩn
     (mục 17.1), dùng kiểm tra/bóc sơ bộ. Mua hàng/nghiệm thu phải theo
     tiêu chuẩn sản phẩm và chứng từ lô thép."""
-    return (diameter_mm ** 2) / 162.0
+    return (diameter_mm**2) / 162.0
 
 
 def rebar_from_geometry(diameter_mm: float, total_length_m: float) -> QuantityResult:
@@ -160,17 +162,23 @@ def masonry_wall(
         },
         units={"so_vien_gach": "viên", "vua_xay": "m3"},
         assumptions=[
-            f"A_net = {area_net:.2f} m2, loại gạch {brick_type}, mạch vữa {mortar_joint_m*1000:.0f}mm.",
+            f"A_net = {area_net:.2f} m2, loại gạch {brick_type}, "
+            f"mạch vữa {mortar_joint_m * 1000:.0f}mm.",
             "Số viên mua gồm +5% dự phòng cắt/vỡ tham khảo, KHÔNG thay cho định mức áp dụng "
-            "hoặc layout xây thực tế — hao hụt thực tế phụ thuộc độ giòn, số góc, lỗ mở (mục 19.2).",
-            "Vữa xây tính theo hình học (mục 19.3) — dự toán chính thức nên ưu tiên định mức áp dụng.",
+            "hoặc layout xây thực tế — hao hụt thực tế phụ thuộc độ giòn, "
+            "số góc, lỗ mở (mục 19.2).",
+            "Vữa xây tính theo hình học (mục 19.3) — "
+            "dự toán chính thức nên ưu tiên định mức áp dụng.",
         ],
     )
 
 
 # ─── Chương 20 — Trát ───────────────────────────────────────────────────────
 
-def plaster(area_m2: float, thickness_mm: float = 15.0, dry_mortar_kg_per_m2_per_mm: float = 1.6) -> QuantityResult:
+
+def plaster(
+    area_m2: float, thickness_mm: float = 15.0, dry_mortar_kg_per_m2_per_mm: float = 1.6
+) -> QuantityResult:
     """M_dry = A × c_manufacturer(t) (mục 20.2) — hệ số tiêu hao tham khảo,
     dự toán chính thức phải dùng định mức nhà sản xuất công bố."""
     if area_m2 <= 0:
@@ -181,13 +189,16 @@ def plaster(area_m2: float, thickness_mm: float = 15.0, dry_mortar_kg_per_m2_per
         quantities={"vua_kho_tron_san": round(dry_mortar_kg, 1)},
         units={"vua_kho_tron_san": "kg"},
         assumptions=[
-            f"Chiều dày trát {thickness_mm}mm, hệ số tiêu hao {dry_mortar_kg_per_m2_per_mm} kg/m2/mm — "
-            "hệ số THAM KHẢO, phải thay bằng định mức nhà sản xuất công bố cho đúng loại vữa/nền (mục 20.2).",
+            f"Chiều dày trát {thickness_mm}mm, "
+            f"hệ số tiêu hao {dry_mortar_kg_per_m2_per_mm} kg/m2/mm — "
+            "hệ số THAM KHẢO, phải thay bằng định mức nhà sản xuất công bố "
+            "cho đúng loại vữa/nền (mục 20.2).",
         ],
     )
 
 
 # ─── Chương 21 — Gạch ốp lát ────────────────────────────────────────────────
+
 
 def tiling(area_m2: float, tile_size_m2: float = 0.36, waste_pct: float = 8.0) -> QuantityResult:
     """Diện tích thuần + làm tròn theo hộp (mục 21.1–21.2). waste_pct mặc định
@@ -198,7 +209,7 @@ def tiling(area_m2: float, tile_size_m2: float = 0.36, waste_pct: float = 8.0) -
     n_tiles = area_buy / tile_size_m2
     return QuantityResult(
         work_type="tiling",
-        quantities={"so_vien_gach_lat": round(n_tiles) , "dien_tich_mua": round(area_buy, 2)},
+        quantities={"so_vien_gach_lat": round(n_tiles), "dien_tich_mua": round(area_buy, 2)},
         units={"so_vien_gach_lat": "viên", "dien_tich_mua": "m2"},
         assumptions=[
             f"Diện tích thuần {area_m2:.2f} m2 + {waste_pct:.0f}% hao hụt/cắt — cần làm tròn "
@@ -208,6 +219,7 @@ def tiling(area_m2: float, tile_size_m2: float = 0.36, waste_pct: float = 8.0) -
 
 
 # ─── Chương 22 — Sơn ────────────────────────────────────────────────────────
+
 
 def paint(area_m2: float, coats: int = 2, coverage_m2_per_liter: float = 10.0) -> QuantityResult:
     """Lượng sơn lý thuyết = diện tích × số lớp / định mức phủ (mục 22.2)."""
@@ -221,6 +233,7 @@ def paint(area_m2: float, coats: int = 2, coverage_m2_per_liter: float = 10.0) -
         assumptions=[
             f"{coats} lớp, định mức phủ {coverage_m2_per_liter} m2/lít — định mức THAM KHẢO theo "
             "nhà sản xuất, thực tế phụ thuộc độ hút bề mặt và phương pháp thi công (mục 22.2).",
-            "Lượng mua thực tế cần làm tròn theo thùng sơn (mục 22.3), không dùng số lít lý thuyết trực tiếp.",
+            "Lượng mua thực tế cần làm tròn theo thùng sơn (mục 22.3), "
+            "không dùng số lít lý thuyết trực tiếp.",
         ],
     )

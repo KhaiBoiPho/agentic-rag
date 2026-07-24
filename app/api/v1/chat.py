@@ -1,15 +1,16 @@
 """Chat REST endpoint — SSE fallback (gRPC preferred for production)."""
+
 from __future__ import annotations
 
 import json
 import time
-from typing import AsyncGenerator, Optional
+from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.api.deps import CurrentUser, SSE_HEADERS
+from app.api.deps import SSE_HEADERS, CurrentUser
 from app.api.v1.config import load_skill_prompt
 from app.core.chat.intent import FORM_SCHEMAS, detect_intent, prefill_from_text
 from app.core.chunking.base import count_tokens
@@ -23,18 +24,24 @@ router = APIRouter()
 _DEFAULT_SYSTEM = "You are a helpful AI assistant."
 
 
+def _sse(payload: dict) -> str:
+    return f"data: {json.dumps(payload)}\n\n"
+
+
 class FormSubmission(BaseModel):
     form_id: str
     data: dict
 
 
 class ChatRequest(BaseModel):
-    kb_id: Optional[str] = None
-    project_id: Optional[str] = None  # if set, retrieval searches every KB in the project instead of kb_id
+    kb_id: str | None = None
+    project_id: str | None = (
+        None  # if set, retrieval searches every KB in the project instead of kb_id
+    )
     message: str = ""
-    conversation_id: Optional[str] = None
-    model: Optional[str] = None
-    skill_id: Optional[str] = None     # e.g. "write", "code", "learn"
+    conversation_id: str | None = None
+    model: str | None = None
+    skill_id: str | None = None  # e.g. "write", "code", "learn"
     temperature: float = 0.7
     max_tokens: int = 2048
     use_rag: bool = True
@@ -47,7 +54,7 @@ class ChatRequest(BaseModel):
     # 0.5 is a much more honest "this chunk is actually about the query" bar.
     score_threshold: float = 0.5
     mode: str = "rag"  # "rag" | "agent" — "agent" lets the LLM call construction-cost tools
-    form_submission: Optional[FormSubmission] = None  # human-in-the-loop form result, see intent.py
+    form_submission: FormSubmission | None = None  # human-in-the-loop form result, see intent.py
 
 
 @router.post("/stream")
@@ -56,6 +63,7 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
     llm = OpenRouterClient()
     retriever = Retriever()
     from app.db.postgres.repositories.message_repo import MessageRepository
+
     msg_repo = MessageRepository()
 
     # Determine system prompt: skill > default
@@ -77,55 +85,85 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
         # a raw markdown table — while the prompt forbids changing any number.
         if body.form_submission is not None:
             if body.form_submission.form_id == "construction_cost":
-                from app.core.mcp.tools.cost_tool import _compute_cost, build_cost_facts, COST_PRESENT_PROMPT
+                from app.core.mcp.tools.cost_tool import (
+                    COST_PRESENT_PROMPT,
+                    _compute_cost,
+                    build_cost_facts,
+                )
 
                 data = body.form_submission.data
                 tool_args = {
-                    "floor_area_m2": float(data["area_per_floor_m2"]) * float(data.get("num_floors", 1)),
+                    "floor_area_m2": float(data["area_per_floor_m2"])
+                    * float(data.get("num_floors", 1)),
                     "region": data["region"],
                     "finish_level": data.get("finish_level", "hoan_thien_co_ban"),
                 }
                 cost = await _compute_cost(tool_args)
                 if cost.get("error"):
-                    yield f"data: {json.dumps({'type': 'text', 'delta': cost['error'], 'done': False})}\n\n"
-                    yield f"data: {json.dumps({'type': 'text', 'delta': '', 'done': True, 'sources': []})}\n\n"
+                    yield _sse({"type": "text", "delta": cost["error"], "done": False})
+                    yield _sse({"type": "text", "delta": "", "done": True, "sources": []})
                     return
                 # Two kinds of citation coexist: DB prices carry their source
                 # document (RAG chips: document_name + score), web-fallback
                 # prices carry url+title ([n] badges + "Nguồn" footer). The
                 # frontend already renders each shape by which keys are set.
-                form_sources = cost["rag_sources"] + [{"url": s["url"], "title": s["title"]} for s in cost["web_sources"]]
+                form_sources = cost["rag_sources"] + [
+                    {"url": s["url"], "title": s["title"]} for s in cost["web_sources"]
+                ]
                 # If any price came from the KB documents, label the answer as
                 # RAG against that KB — it's document-backed, not a plain chat.
-                rag_ctx = {"kind": "kb", "name": cost["rag_kb_name"]} if cost.get("rag_kb_name") else None
+                rag_ctx = (
+                    {"kind": "kb", "name": cost["rag_kb_name"]} if cost.get("rag_kb_name") else None
+                )
                 prompt = COST_PRESENT_PROMPT.format(facts=build_cost_facts(cost))
                 reply = ""
                 async for token in llm.stream_chat(
                     messages=[{"role": "user", "content": prompt}],
-                    model=body.model, temperature=0.2, max_tokens=1200,
+                    model=body.model,
+                    temperature=0.2,
+                    max_tokens=1200,
                 ):
                     reply += token
-                    yield f"data: {json.dumps({'type': 'text', 'delta': token, 'done': False})}\n\n"
-                yield f"data: {json.dumps({'type': 'text', 'delta': '', 'done': True, 'sources': form_sources, 'rag_context': rag_ctx})}\n\n"
+                    yield _sse({"type": "text", "delta": token, "done": False})
+                yield _sse(
+                    {
+                        "type": "text",
+                        "delta": "",
+                        "done": True,
+                        "sources": form_sources,
+                        "rag_context": rag_ctx,
+                    }
+                )
                 # Persist the estimate so it's part of the conversation memory
                 # (a synthetic user line captures the request, since the form
                 # data — not free text — is what actually came in this turn).
                 if body.conversation_id:
                     try:
                         await msg_repo.ensure_conversation(
-                            body.conversation_id, str(current_user.id), kb_id=body.kb_id, title="Dự toán chi phí xây dựng",
+                            body.conversation_id,
+                            str(current_user.id),
+                            kb_id=body.kb_id,
+                            title="Dự toán chi phí xây dựng",
                         )
                         req_line = (
                             f"[Dự toán chi phí xây dựng] {tool_args['floor_area_m2']:.0f} m² sàn, "
                             f"vùng {tool_args['region']}, mức {tool_args['finish_level']}"
                         )
                         await msg_repo.add(body.conversation_id, "user", req_line)
-                        await msg_repo.add(body.conversation_id, "assistant", reply, sources=form_sources or None)
+                        await msg_repo.add(
+                            body.conversation_id, "assistant", reply, sources=form_sources or None
+                        )
                     except Exception:
                         pass
                 return
-            yield f"data: {json.dumps({'type': 'text', 'delta': f'Unknown form_id: {body.form_submission.form_id}', 'done': False})}\n\n"
-            yield f"data: {json.dumps({'type': 'text', 'delta': '', 'done': True, 'sources': []})}\n\n"
+            yield _sse(
+                {
+                    "type": "text",
+                    "delta": f"Unknown form_id: {body.form_submission.form_id}",
+                    "done": False,
+                }
+            )
+            yield _sse({"type": "text", "delta": "", "done": True, "sources": []})
             return
 
         # ─── Fixed-pipeline intent detection ───────────────────────────────
@@ -152,13 +190,15 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
             if body.conversation_id:
                 try:
                     await msg_repo.ensure_conversation(
-                        body.conversation_id, str(current_user.id),
-                        kb_id=body.kb_id, title=body.message[:512],
+                        body.conversation_id,
+                        str(current_user.id),
+                        kb_id=body.kb_id,
+                        title=body.message[:512],
                     )
                     await msg_repo.add(body.conversation_id, "user", body.message)
                 except Exception:
                     pass
-            yield f"data: {json.dumps(event)}\n\n"
+            yield _sse(event)
             return
 
         if body.mode == "agent":
@@ -169,8 +209,8 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
                 {"role": "user", "content": body.message},
             ]
             final_content, tool_call_log = await run_tool_loop(messages, llm=llm, model=body.model)
-            yield f"data: {json.dumps({'type': 'text', 'delta': final_content, 'done': False})}\n\n"
-            yield f"data: {json.dumps({'type': 'text', 'delta': '', 'done': True, 'sources': tool_call_log})}\n\n"
+            yield _sse({"type": "text", "delta": final_content, "done": False})
+            yield _sse({"type": "text", "delta": "", "done": True, "sources": tool_call_log})
             return
 
         search_kb_id: str | list[str] | None = body.kb_id
@@ -189,11 +229,15 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
                 score_threshold=body.score_threshold,
             )
             sources = [
-                {"chunk_id": c.chunk_id, "document_name": c.document_name,
-                 "content": c.content, "score": c.score}
+                {
+                    "chunk_id": c.chunk_id,
+                    "document_name": c.document_name,
+                    "content": c.content,
+                    "score": c.score,
+                }
                 for c in chunks
             ]
-            context = "\n\n".join(f"[{i+1}]: {c.content}" for i, c in enumerate(chunks))
+            context = "\n\n".join(f"[{i + 1}]: {c.content}" for i, c in enumerate(chunks))
             user_msg = f"Context:\n{context}\n\nQuestion: {body.message}"
         else:
             user_msg = body.message
@@ -225,9 +269,9 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
             max_tokens=body.max_tokens,
         ):
             reply += token
-            yield f"data: {json.dumps({'type': 'text', 'delta': token, 'done': False})}\n\n"
+            yield _sse({"type": "text", "delta": token, "done": False})
 
-        yield f"data: {json.dumps({'type': 'text', 'delta': '', 'done': True, 'sources': sources})}\n\n"
+        yield _sse({"type": "text", "delta": "", "done": True, "sources": sources})
 
         # Persist this turn for future context (best-effort — the reply has
         # already been delivered in full above, so a write failure is
@@ -236,11 +280,15 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
         if body.conversation_id:
             try:
                 await msg_repo.ensure_conversation(
-                    body.conversation_id, str(current_user.id),
-                    kb_id=body.kb_id, title=body.message[:512],
+                    body.conversation_id,
+                    str(current_user.id),
+                    kb_id=body.kb_id,
+                    title=body.message[:512],
                 )
                 await msg_repo.add(body.conversation_id, "user", body.message)
-                await msg_repo.add(body.conversation_id, "assistant", reply, sources=sources or None)
+                await msg_repo.add(
+                    body.conversation_id, "assistant", reply, sources=sources or None
+                )
             except Exception:
                 pass
 
@@ -254,8 +302,10 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
             prompt_tokens = count_tokens(system_prompt) + count_tokens(user_msg)
             completion_tokens = count_tokens(reply)
             await UsageRepository().record(
-                user_id=str(current_user.id), model=model_used,
-                prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+                user_id=str(current_user.id),
+                model=model_used,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
                 cost_usd=estimate_cost_usd(model_used, prompt_tokens, completion_tokens),
                 duration_ms=int((time.perf_counter() - t0) * 1000),
             )

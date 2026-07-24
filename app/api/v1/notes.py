@@ -1,8 +1,7 @@
 """Note CRUD endpoints — free-standing personal scratchpad, not linked to
 any chat message or conversation."""
-from __future__ import annotations
 
-from typing import Optional
+from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
@@ -19,8 +18,8 @@ class NoteCreate(BaseModel):
 
 
 class NoteUpdate(BaseModel):
-    title: Optional[str] = None
-    content: Optional[str] = None
+    title: str | None = None
+    content: str | None = None
 
 
 class NoteResponse(BaseModel):
@@ -33,8 +32,11 @@ class NoteResponse(BaseModel):
 
 def _to_response(note) -> NoteResponse:
     return NoteResponse(
-        id=str(note.id), title=note.title, content=note.content,
-        created_at=int(note.created_at.timestamp()), updated_at=int(note.updated_at.timestamp()),
+        id=str(note.id),
+        title=note.title,
+        content=note.content,
+        created_at=int(note.created_at.timestamp()),
+        updated_at=int(note.updated_at.timestamp()),
     )
 
 

@@ -1,8 +1,9 @@
 """SQLAlchemy async engine + session factory."""
+
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
@@ -32,6 +33,7 @@ class Base(DeclarativeBase):
 async def init_db() -> None:
     """Create all tables (development only — use Alembic in production)."""
     from app.db.postgres import models  # noqa: F401 — trigger model registration
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

@@ -1,4 +1,5 @@
 """RAG retriever — dense vector search via Qdrant."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

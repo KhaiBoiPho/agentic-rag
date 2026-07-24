@@ -11,6 +11,7 @@ Only invoked when normal extraction yields no chunks at all — running a
 vision-LLM call per page on every PDF would be slow and unnecessary for the
 ~8 documents that already have a real text layer.
 """
+
 from __future__ import annotations
 
 import base64
@@ -59,7 +60,9 @@ async def ocr_pdf_to_chunks(
         logger.warning("OCR found no readable text in any page of %s", filename)
         return []
 
-    merged = naive_merge(page_texts, chunk_token_num=chunk_token_num, overlap_percent=overlap_percent)
+    merged = naive_merge(
+        page_texts, chunk_token_num=chunk_token_num, overlap_percent=overlap_percent
+    )
     chunks = [
         Chunk(
             content=text,
@@ -72,8 +75,14 @@ async def ocr_pdf_to_chunks(
         for text in merged
     ]
     from app.core.chunking.base import count_tokens
+
     for c in chunks:
         c.token_count = count_tokens(c.content)
 
-    logger.info("OCR fallback: %s -> %d page(s) with text -> %d chunks", filename, len(page_texts), len(chunks))
+    logger.info(
+        "OCR fallback: %s -> %d page(s) with text -> %d chunks",
+        filename,
+        len(page_texts),
+        len(chunks),
+    )
     return chunks

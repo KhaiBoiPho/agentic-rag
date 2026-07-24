@@ -7,6 +7,7 @@ height, not high prices). Both Search and Research call this to rewrite such
 a query against the recent chat before searching. No context → returned
 unchanged; any failure → falls back to the original query (never blocks).
 """
+
 from __future__ import annotations
 
 import logging
@@ -28,8 +29,12 @@ async def contextualize_query(query: str, context: str) -> str:
         from app.core.llm.openrouter import OpenRouterClient
 
         rewritten = await OpenRouterClient().chat(
-            messages=[{"role": "user", "content": _REWRITE_PROMPT.format(context=context, query=query)}],
-            model="openai/gpt-4o-mini", temperature=0.0, max_tokens=60,
+            messages=[
+                {"role": "user", "content": _REWRITE_PROMPT.format(context=context, query=query)}
+            ],
+            model="openai/gpt-4o-mini",
+            temperature=0.0,
+            max_tokens=60,
         )
         resolved = (rewritten or "").strip().strip('"')
         return resolved or query

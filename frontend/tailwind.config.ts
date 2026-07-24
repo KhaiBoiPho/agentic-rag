@@ -1,8 +1,7 @@
 import type { Config } from 'tailwindcss';
 
-// Palette derived from frontend/DESIGN.md (Stripe-inspired) — indigo primary +
-// deep-navy ink, mapped onto the brand-* scale so existing bg-brand-*/text-brand-*
-// usages across components pick up the new identity without a full rename.
+// ChatGPT-style monochrome palette: near-black accent/buttons, neutral grays
+// for surfaces/borders, dedicated dark tones for the sidebar rail.
 const config: Config = {
   darkMode: 'class',
   content: ['./app/**/*.{ts,tsx}', './components/**/*.{ts,tsx}'],
@@ -10,42 +9,41 @@ const config: Config = {
     extend: {
       colors: {
         brand: {
-          50: '#eef0ff',
-          100: '#e0e3fe',
-          200: '#b9b9f9', // primary-bg-subdued-hover
-          300: '#9d97fb',
-          400: '#8079fc',
-          500: '#665efd', // primary-soft
-          600: '#533afd', // primary
-          700: '#4434d4', // primary-deep
-          800: '#2e2b8c', // primary-press
-          900: '#1c1e54', // brand-dark-900
+          50: '#f7f7f8',
+          100: '#ececf1',
+          200: '#d9d9e3',
+          300: '#c5c5d2',
+          400: '#8e8ea0',
+          500: '#40414f',
+          600: '#0d0d0d', // primary button / accent (near-black)
+          700: '#000000',
+          800: '#000000',
+          900: '#000000',
         },
         ink: {
-          DEFAULT: '#0d253d',
-          secondary: '#273951',
-          mute: '#64748d',
+          DEFAULT: '#0d0d0d',
+          secondary: '#353740',
+          mute: '#6e6e80',
         },
         canvas: {
           DEFAULT: '#ffffff',
-          soft: '#f6f9fc',
-          cream: '#f5e9d4',
+          soft: '#f7f7f8',
         },
         hairline: {
-          DEFAULT: '#e3e8ee',
-          input: '#a8c3de',
+          DEFAULT: '#e5e5e5',
+          input: '#d9d9e3',
         },
-        ruby: '#ea2261',
-        magenta: '#f96bee',
+        sidebar: {
+          DEFAULT: '#171717',
+          hover: '#212121',
+          active: '#212121',
+          border: '#2a2a2a',
+          text: '#ececec',
+          mute: '#8e8ea0',
+        },
       },
       fontFamily: {
-        sans: [
-          'var(--font-inter)',
-          'SF Pro Display',
-          'system-ui',
-          '-apple-system',
-          'sans-serif',
-        ],
+        sans: ['var(--font-inter)', 'system-ui', '-apple-system', 'sans-serif'],
       },
       borderRadius: {
         pill: '9999px',

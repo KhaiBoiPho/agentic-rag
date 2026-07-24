@@ -13,11 +13,11 @@ main reason Research felt like it hung — cut it: response_generator now
 writes straight from `aggregated_text` (graph.py::stream falls back to it
 whenever `summary` is empty), which is one LLM call fewer per run/iteration.
 """
+
 from __future__ import annotations
 
-import asyncio
 import logging
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 from langgraph.graph import END, START, StateGraph
 
@@ -25,7 +25,7 @@ from app.core.research.nodes.content_aggregator import content_aggregator_node
 from app.core.research.nodes.prompt_expander import prompt_expander_node
 from app.core.research.nodes.quality_checker import quality_checker_node
 from app.core.research.nodes.response_generator import response_generator_node
-from app.core.research.nodes.web_searcher import firecrawl_search, web_searcher_node
+from app.core.research.nodes.web_searcher import web_searcher_node
 from app.core.research.state import ResearchState
 
 logger = logging.getLogger(__name__)
@@ -96,14 +96,24 @@ class DeepResearchGraph:
         }
 
         # Emit starting event
-        yield {"node": "start", "status": "started", "content": query, "progress": 0.0, "done": False}
+        yield {
+            "node": "start",
+            "status": "started",
+            "content": query,
+            "progress": 0.0,
+            "done": False,
+        }
 
         if pre_search_results:
             yield {
-                "node": "pre_search", "status": "completed",
+                "node": "pre_search",
+                "status": "completed",
                 "content": f"Đã dùng {len(pre_search_results)} kết quả Search làm context ban đầu",
                 "progress": 0.02,
-                "sources": [{"url": r["url"], "title": r["title"], "snippet": r.get("snippet", "")} for r in pre_search_results],
+                "sources": [
+                    {"url": r["url"], "title": r["title"], "snippet": r.get("snippet", "")}
+                    for r in pre_search_results
+                ],
                 "iteration": 0,
             }
 
@@ -133,24 +143,36 @@ class DeepResearchGraph:
         # (MarkdownRenderer) turns those into small clickable badges keyed
         # to this same 1-based index, instead of the model writing its own
         # full-size "[source](url)" markdown links inline.
-        sources_list = "\n".join(f"{i}. {s.get('title', s.get('url', ''))}" for i, s in enumerate(sources, 1)) or "(không có nguồn)"
+        sources_list = (
+            "\n".join(f"{i}. {s.get('title', s.get('url', ''))}" for i, s in enumerate(sources, 1))
+            or "(không có nguồn)"
+        )
         prompt = RESPONSE_PROMPT.format(query=query, summary=summary, sources_list=sources_list)
 
         full_response = ""
         async for token in OpenRouterClient().stream_chat(
             messages=[{"role": "user", "content": prompt}],
-            model="openai/gpt-4o-mini", temperature=0.5, max_tokens=3000,
+            model="openai/gpt-4o-mini",
+            temperature=0.5,
+            max_tokens=3000,
         ):
             full_response += token
             yield {
-                "node": "response_generator", "status": "streaming",
-                "content": token, "progress": 0.95, "done": False,
+                "node": "response_generator",
+                "status": "streaming",
+                "content": token,
+                "progress": 0.95,
+                "done": False,
                 "iteration": final_state.get("iteration", 0),
             }
 
         yield {
-            "node": "response_generator", "status": "completed",
-            "content": full_response, "progress": 1.0, "sources": sources, "done": False,
+            "node": "response_generator",
+            "status": "completed",
+            "content": full_response,
+            "progress": 1.0,
+            "sources": sources,
+            "done": False,
             "iteration": final_state.get("iteration", 0),
         }
 

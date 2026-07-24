@@ -21,7 +21,9 @@ class NoteRepository:
     async def get(self, note_id: str, user_id: str) -> Note | None:
         async with get_session() as s:
             result = await s.execute(
-                select(Note).where(Note.id == uuid.UUID(note_id), Note.user_id == uuid.UUID(user_id))
+                select(Note).where(
+                    Note.id == uuid.UUID(note_id), Note.user_id == uuid.UUID(user_id)
+                )
             )
             return result.scalar_one_or_none()
 
@@ -33,7 +35,9 @@ class NoteRepository:
             await s.refresh(note)
             return note
 
-    async def update(self, note_id: str, user_id: str, title: str | None, content: str | None) -> Note | None:
+    async def update(
+        self, note_id: str, user_id: str, title: str | None, content: str | None
+    ) -> Note | None:
         async with get_session() as s:
             note = await s.get(Note, uuid.UUID(note_id))
             if not note or str(note.user_id) != user_id:

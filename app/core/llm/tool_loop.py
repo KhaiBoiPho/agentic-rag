@@ -7,6 +7,7 @@ No LangGraph here on purpose: this is a bounded, single-turn tool loop
 return), not a multi-node research graph. `app/core/research/graph.py`
 solves a different problem (iterative web search) and isn't a fit.
 """
+
 from __future__ import annotations
 
 import json
@@ -64,18 +65,20 @@ async def run_tool_loop(
         if not message.tool_calls:
             return message.content or "", tool_call_log
 
-        conversation.append({
-            "role": "assistant",
-            "content": message.content,
-            "tool_calls": [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {"name": tc.function.name, "arguments": tc.function.arguments},
-                }
-                for tc in message.tool_calls
-            ],
-        })
+        conversation.append(
+            {
+                "role": "assistant",
+                "content": message.content,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                    }
+                    for tc in message.tool_calls
+                ],
+            }
+        )
 
         for tc in message.tool_calls:
             name = tc.function.name
@@ -97,11 +100,13 @@ async def run_tool_loop(
                     result_text = f"Tool error: {exc}"
 
             tool_call_log.append({"name": name, "arguments": args, "result": result_text})
-            conversation.append({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": result_text,
-            })
+            conversation.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result_text,
+                }
+            )
 
     # Ran out of rounds — ask once more without tools to force a final answer.
     final = await llm.chat(conversation, model=model)

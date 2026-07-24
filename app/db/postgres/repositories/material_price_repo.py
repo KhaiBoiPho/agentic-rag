@@ -13,6 +13,7 @@ from app.db.postgres.models import MaterialPrice
 class MaterialPriceRow:
     """One parsed price row, ready to persist. Mirrors MaterialPrice columns
     minus the identifiers assigned at insert time."""
+
     region: str
     material_category: str
     material_name: str
@@ -34,9 +35,7 @@ def _trunc(value: str | None, max_len: int) -> str | None:
 
 
 class MaterialPriceRepository:
-    async def bulk_create(
-        self, document_id: str, kb_id: str, rows: list[MaterialPriceRow]
-    ) -> int:
+    async def bulk_create(self, document_id: str, kb_id: str, rows: list[MaterialPriceRow]) -> int:
         if not rows:
             return 0
         async with get_session() as s:

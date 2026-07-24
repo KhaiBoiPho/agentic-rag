@@ -2,11 +2,11 @@
 
 Returns quality_passed=True (continue to Node 5) or False (loop back to Node 1).
 """
+
 from __future__ import annotations
 
 import json
 
-from app.config import settings
 from app.core.llm.openrouter import OpenRouterClient
 from app.core.research.state import ResearchState
 
@@ -57,9 +57,7 @@ async def quality_checker_node(state: ResearchState) -> dict:
         }
 
     excerpt = aggregated[:4000]
-    prompt = QUALITY_PROMPT.format(
-        query=query, content_excerpt=excerpt, threshold=threshold
-    )
+    prompt = QUALITY_PROMPT.format(query=query, content_excerpt=excerpt, threshold=threshold)
 
     try:
         response = await _llm.chat(

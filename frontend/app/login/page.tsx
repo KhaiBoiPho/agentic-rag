@@ -30,10 +30,10 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="gradient-mesh flex h-full items-center justify-center px-4">
-      <div className="w-full max-w-sm rounded-2xl border border-hairline bg-canvas p-8 shadow-[0_8px_24px_rgba(0,55,112,0.08),0_2px_6px_rgba(0,55,112,0.04)] dark:border-slate-800 dark:bg-slate-900">
-        <h1 className="text-xl font-semibold tracking-tight">Đăng nhập</h1>
-        <p className="mt-1 text-sm text-slate-500">Agentic RAG — Trợ lý vật liệu xây dựng</p>
+    <div className="flex h-full items-center justify-center bg-canvas px-4 dark:bg-[#212121]">
+      <div className="w-full max-w-sm rounded-2xl border border-hairline bg-canvas p-8 dark:border-slate-800 dark:bg-slate-900">
+        <h1 className="text-xl font-semibold">Đăng nhập</h1>
+        <p className="mt-1 text-sm text-ink-mute">Agentic RAG — Trợ lý vật liệu xây dựng</p>
         <form onSubmit={onSubmit} className="mt-6 space-y-4">
           <div>
             <label className="mb-1 block text-sm font-medium">Email</label>

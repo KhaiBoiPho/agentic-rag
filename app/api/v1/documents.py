@@ -1,4 +1,5 @@
 """Document upload — publishes ingestion job to RabbitMQ, returns job_id."""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, UploadFile, status
@@ -30,7 +31,9 @@ async def upload_document(
     table_context_size: int = Query(default=None),
 ):
     if is_system_kb(kb_id):
-        raise HTTPException(403, "This knowledge base is system-managed (read-only) — uploads are not allowed")
+        raise HTTPException(
+            403, "This knowledge base is system-managed (read-only) — uploads are not allowed"
+        )
     if file.size and file.size > MAX_FILE_MB * 1024 * 1024:
         raise HTTPException(400, f"File exceeds {MAX_FILE_MB}MB limit")
 
@@ -52,6 +55,7 @@ async def upload_document(
 @router.get("/{kb_id}")
 async def list_documents(kb_id: str, current_user: CurrentUser, limit: int = 20, offset: int = 0):
     from app.db.postgres.repositories.document_repo import DocumentRepository
+
     repo = DocumentRepository()
     # System KB documents belong to the system user, not the requester —
     # skip the user filter for these so the Documents view isn't always
@@ -62,8 +66,11 @@ async def list_documents(kb_id: str, current_user: CurrentUser, limit: int = 20,
         "total": total,
         "documents": [
             {
-                "id": str(d.id), "filename": d.filename, "status": d.status,
-                "chunk_count": d.chunk_count, "created_at": int(d.created_at.timestamp()),
+                "id": str(d.id),
+                "filename": d.filename,
+                "status": d.status,
+                "chunk_count": d.chunk_count,
+                "created_at": int(d.created_at.timestamp()),
             }
             for d in docs
         ],
@@ -82,7 +89,9 @@ async def upload_price_document(
     both the normal RAG chunking and structured price-row extraction into
     material_prices (see PriceExtractionPipeline)."""
     if is_system_kb(kb_id):
-        raise HTTPException(403, "This knowledge base is system-managed (read-only) — uploads are not allowed")
+        raise HTTPException(
+            403, "This knowledge base is system-managed (read-only) — uploads are not allowed"
+        )
     if file.size and file.size > MAX_FILE_MB * 1024 * 1024:
         raise HTTPException(400, f"File exceeds {MAX_FILE_MB}MB limit")
 
@@ -102,12 +111,15 @@ async def upload_price_document(
 async def delete_document(document_id: str, current_user: CurrentUser):
     from app.db.postgres.repositories.document_repo import DocumentRepository
     from app.db.qdrant.client import QdrantStore
+
     repo = DocumentRepository()
     qdrant = QdrantStore()
     doc = await repo.get_by_id(document_id, str(current_user.id))
     if not doc:
         raise HTTPException(404, "Document not found")
     if is_system_kb(str(doc.kb_id)):
-        raise HTTPException(403, "This document belongs to a system-managed knowledge base and cannot be deleted")
+        raise HTTPException(
+            403, "This document belongs to a system-managed knowledge base and cannot be deleted"
+        )
     await qdrant.delete_by_document(document_id)
     await repo.delete(document_id, str(current_user.id))

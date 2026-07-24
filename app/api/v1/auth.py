@@ -1,4 +1,5 @@
 """Auth endpoints — register, login, refresh, logout, OAuth2."""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, status
@@ -17,6 +18,7 @@ oauth = OAuthProvider()
 
 
 # ─── Schemas ─────────────────────────────────────────────────────────────────
+
 
 class RegisterRequest(BaseModel):
     email: EmailStr
@@ -40,6 +42,7 @@ class RefreshRequest(BaseModel):
 
 
 # ─── Endpoints ───────────────────────────────────────────────────────────────
+
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 async def register(body: RegisterRequest):
@@ -108,6 +111,7 @@ async def logout(body: RefreshRequest):
 
 
 # ─── OAuth2 ──────────────────────────────────────────────────────────────────
+
 
 @router.get("/oauth/google")
 async def oauth_google_redirect():

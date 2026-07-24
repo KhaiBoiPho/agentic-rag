@@ -2,10 +2,11 @@
 
 Yields progress events so gRPC servicer can stream them back to the client.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 from app.core.chunking.base import MAX_EMBED_TOKENS, split_oversized_table_chunk
 from app.core.chunking.dispatcher import ChunkDispatcher
@@ -33,6 +34,7 @@ class IngestionPipeline:
         config: dict,
     ) -> AsyncGenerator[dict, None]:
         import time
+
         t0 = time.perf_counter()
 
         chunk_token_num = config.get("chunk_token_num", 512)
@@ -68,9 +70,14 @@ class IngestionPipeline:
             yield {"stage": "ocr", "progress": 0.2, "done": False}
             try:
                 from app.core.ingestion.ocr_fallback import ocr_pdf_to_chunks
+
                 chunks = await ocr_pdf_to_chunks(
-                    content, filename, doc_id, kb_id,
-                    chunk_token_num=chunk_token_num, overlap_percent=overlap_pct,
+                    content,
+                    filename,
+                    doc_id,
+                    kb_id,
+                    chunk_token_num=chunk_token_num,
+                    overlap_percent=overlap_pct,
                 )
             except Exception as exc:
                 logger.warning("OCR fallback failed doc_id=%s file=%s: %s", doc_id, filename, exc)
@@ -85,12 +92,16 @@ class IngestionPipeline:
                 logger.warning(
                     "doc_id=%s: %d chunk(s) still exceed %d tokens after table-splitting "
                     "(non-table content or a single oversized cell) — dropping them",
-                    doc_id, still_oversized, MAX_EMBED_TOKENS,
+                    doc_id,
+                    still_oversized,
+                    MAX_EMBED_TOKENS,
                 )
                 expanded = [c for c in expanded if c.token_count <= MAX_EMBED_TOKENS]
             logger.info(
                 "doc_id=%s: split %d oversized table chunk(s) into %d smaller chunks",
-                doc_id, oversized_count, len(expanded) - (len(chunks) - oversized_count),
+                doc_id,
+                oversized_count,
+                len(expanded) - (len(chunks) - oversized_count),
             )
             chunks = expanded
 
@@ -99,6 +110,7 @@ class IngestionPipeline:
 
         # 3. Embed in batches
         from app.config import settings
+
         batch_size = settings.embed_batch_size
         embeddings: list[list[float]] = []
 
@@ -140,4 +152,10 @@ class IngestionPipeline:
         INGESTION_DURATION.observe(elapsed)
 
         logger.info("Ingestion complete doc_id=%s chunks=%d elapsed=%.2fs", doc_id, total, elapsed)
-        yield {"stage": "done", "progress": 1.0, "chunks_done": total, "chunks_total": total, "done": True}
+        yield {
+            "stage": "done",
+            "progress": 1.0,
+            "chunks_done": total,
+            "chunks_total": total,
+            "done": True,
+        }

@@ -1,8 +1,9 @@
 """TTS Provider — streams audio bytes back to caller via OpenRouter's
 OpenAI-compatible /audio/speech endpoint (see OpenRouterClient.tts_stream)."""
+
 from __future__ import annotations
 
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 from app.core.llm.openrouter import OpenRouterClient
 

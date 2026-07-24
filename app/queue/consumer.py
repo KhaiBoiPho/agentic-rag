@@ -1,4 +1,5 @@
 """RabbitMQ consumer — processes ingestion jobs from the queue."""
+
 from __future__ import annotations
 
 import base64

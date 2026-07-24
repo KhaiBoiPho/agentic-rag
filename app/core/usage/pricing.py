@@ -8,6 +8,7 @@ against this static table, refreshed by hand — treat the Usage page as
 "roughly how much", not an invoice. Rates are $ per 1M tokens, from public
 OpenRouter/provider pricing at the time this was written.
 """
+
 from __future__ import annotations
 
 # (input $/1M tokens, output $/1M tokens) — kept in sync with
