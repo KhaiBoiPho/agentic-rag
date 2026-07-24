@@ -1,9 +1,8 @@
 # Whisper STT — run on your own GPU, tunnel it out
 
-Alternative to `runpod/whisper-stt/` — no serverless cold start, but your
-machine has to be on and reachable. Good for testing/demo; RunPod (or
-keeping the machine running as a real server) is the better fit once you
-need this available 24/7 without your own PC being on.
+No serverless cold start, but your machine has to be on and reachable.
+Good for testing/demo; a real always-on GPU host is the better fit once
+this needs to be available 24/7 without your own PC being on.
 
 ## 1. Install
 
