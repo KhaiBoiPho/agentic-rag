@@ -39,15 +39,18 @@ class LocalWhisperService:
         from faster_whisper import WhisperModel
 
         from app.config import settings
+        from app.core.voice.phowhisper import resolve_model_path
 
+        model_path = resolve_model_path(settings.whisper_model_size)
         logger.info(
-            "Loading local Whisper model=%s device=%s compute_type=%s",
+            "Loading local Whisper model=%s (resolved=%s) device=%s compute_type=%s",
             settings.whisper_model_size,
+            model_path,
             settings.whisper_device,
             settings.whisper_compute_type,
         )
         self._model = WhisperModel(
-            settings.whisper_model_size,
+            model_path,
             device=settings.whisper_device,
             compute_type=settings.whisper_compute_type,
         )

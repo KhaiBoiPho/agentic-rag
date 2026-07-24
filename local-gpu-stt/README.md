@@ -25,7 +25,18 @@ export LD_LIBRARY_PATH="$(python3 -c 'import nvidia.cublas, nvidia.cudnn, os; pr
 STT_SECRET=pick-something-only-you-know python server.py
 ```
 
-First run downloads+converts the "medium" model (a few hundred MB) into
+Default model is plain Whisper "medium". For Vietnamese, PhoWhisper
+(VinAI's Vietnamese fine-tune) is usually more accurate — set
+`WHISPER_MODEL_SIZE` to `phowhisper-tiny` / `phowhisper-base` /
+`phowhisper-small` / `phowhisper-medium` / `phowhisper-large` to use it
+instead (downloads a community CTranslate2 conversion automatically, see
+`resolve_model_path()` in `server.py`):
+
+```bash
+WHISPER_MODEL_SIZE=phowhisper-base STT_SECRET=pick-something-only-you-know python server.py
+```
+
+First run downloads+converts the model (a few hundred MB) into
 `~/.cache/huggingface` — subsequent runs are instant. Server listens on
 `:8001`. Sanity check: `curl http://localhost:8001/health`.
 
