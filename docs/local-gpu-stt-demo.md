@@ -23,13 +23,17 @@ source .venv/bin/activate
 
 export LD_LIBRARY_PATH="/home/khai06/miniconda3/envs/khai-env/lib/python3.11/site-packages/nvidia/cudnn/lib:$LD_LIBRARY_PATH"
 
-WHISPER_MODEL_SIZE=phowhisper-base STT_SECRET=matkhau-tuychon python server.py
+WHISPER_MODEL_SIZE=phowhisper-medium STT_SECRET=matkhau-tuychon python server.py
 ```
 
-Đang dùng **PhoWhisper base** (fine-tune tiếng Việt của VinAI) thay vì
-Whisper gốc — chính xác hơn cho tiếng Việt. Lần đầu chạy sẽ tự tải bản
-CTranslate2 convert sẵn từ `quocphu/PhoWhisper-ct2-FasterWhisper` (vài
-trăm MB), các lần sau dùng cache, không tải lại.
+Đang dùng **PhoWhisper medium** (fine-tune tiếng Việt của VinAI) — theo
+benchmark chính thức (arXiv:2406.02555), medium gần như đạt độ chính xác
+của bản large (WER chênh <0.5 điểm ở mọi tập test) nhưng nhẹ hơn nhiều
+(769M so với 1.55B tham số), trong khi base kém hẳn ở điều kiện nhiễu thực
+tế (WER ~43% so với ~27% của medium ở tập test khó) — không đáng đánh đổi
+khi đã có GPU. Lần đầu chạy sẽ tự tải bản CTranslate2 convert sẵn từ
+`quocphu/PhoWhisper-ct2-FasterWhisper` (~1.5GB cho medium), các lần sau
+dùng cache, không tải lại.
 
 Đợi đến khi thấy dòng:
 ```
