@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from app.api.deps import SSE_HEADERS, CurrentUser
 from app.api.v1.config import load_skill_prompt
 from app.core.chat.intent import FORM_SCHEMAS, detect_intent, detect_small_talk, prefill_from_text
+from app.core.chat.topic_guard import is_off_topic, refusal_reply
 from app.core.chunking.base import count_tokens
 from app.core.llm.openrouter import OpenRouterClient
 from app.core.retrieval.retriever import Retriever
@@ -243,6 +244,30 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
                     pass
             yield _sse(event)
             return
+
+        # ─── Off-topic guard — cheap classifier before the (usually pricier)
+        # main model/agent loop ────────────────────────────────────────────
+        # Only in the default persona: once a KB/project or skill is active,
+        # "on topic" is whatever that KB/skill defines, not construction
+        # specifically — see app/core/chat/topic_guard.py.
+        if not body.kb_id and not body.project_id and not body.skill_id:
+            if await is_off_topic(body.message, llm):
+                reply = refusal_reply()
+                if body.conversation_id:
+                    try:
+                        await msg_repo.ensure_conversation(
+                            body.conversation_id,
+                            str(current_user.id),
+                            kb_id=body.kb_id,
+                            title=body.message[:512],
+                        )
+                        await msg_repo.add(body.conversation_id, "user", body.message)
+                        await msg_repo.add(body.conversation_id, "assistant", reply)
+                    except Exception:
+                        pass
+                yield _sse({"type": "text", "delta": reply, "done": False})
+                yield _sse({"type": "text", "delta": "", "done": True, "sources": []})
+                return
 
         if body.mode == "agent":
             from app.core.llm.tool_loop import run_tool_loop

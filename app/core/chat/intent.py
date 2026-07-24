@@ -133,10 +133,80 @@ _SMALL_TALK: dict[str, tuple[set[str], list[str]]] = {
             "Dạ không có gì, cần gì cứ hỏi mình tiếp nhé!",
         ],
     ),
+    # Categories below follow the standard chitchat set from Rasa's demo
+    # bot (ask_howdoing / ask_whoisit / ask_isbot / ask_whatspossible) —
+    # https://github.com/RasaHQ/rasa/issues/4266 — adapted to this app's
+    # domain. affirm/deny ("ok", "không") and compliments/insults are
+    # deliberately NOT included: those are usually answers to whatever the
+    # assistant asked in the previous turn, so a canned reply would cut
+    # across real conversation flow instead of being safe standalone chat.
+    "how_are_you": (
+        {
+            "bạn khỏe không",
+            "bạn khoẻ không",
+            "khỏe không",
+            "khoẻ không",
+            "bạn có khỏe không",
+            "dạo này sao rồi",
+            "how are you",
+            "how are you doing",
+        },
+        [
+            "Mình khỏe, cảm ơn bạn đã hỏi thăm! Bạn cần hỏi gì về vật liệu xây dựng không?",
+            "Mình ổn, cảm ơn bạn! Có gì về xây dựng cần mình giúp không nè.",
+        ],
+    ),
+    "bot_identity": (
+        {
+            "bạn là ai",
+            "bạn là ai vậy",
+            "bạn là ai thế",
+            "bạn tên gì",
+            "bạn tên là gì",
+            "who are you",
+            "what is your name",
+            "bạn là người hay máy",
+            "bạn là bot à",
+            "bạn là ai à",
+        },
+        [
+            "Mình là trợ lý AI chuyên về vật liệu xây dựng và dự toán chi phí "
+            "xây dựng tại Việt Nam.",
+            "Mình là AI hỗ trợ tra cứu vật liệu xây dựng và tính chi phí xây nhà.",
+        ],
+    ),
+    "bot_capability": (
+        {
+            "bạn làm được gì",
+            "bạn giúp được gì",
+            "bạn có thể làm gì",
+            "bạn hỗ trợ gì",
+            "bạn có thể giúp gì",
+            "what can you do",
+        },
+        [
+            "Mình có thể tra cứu giá vật liệu xây dựng, giải đáp kiến thức xây dựng, và "
+            "tính dự toán chi phí xây nhà theo khu vực. Bạn cứ hỏi thử nhé!",
+            "Mình hỗ trợ tra giá vật liệu, kiến thức xây dựng, và dự toán chi phí xây nhà. "
+            "Bạn cần hỗ trợ gì?",
+        ],
+    ),
+    "apology": (
+        {
+            "xin lỗi",
+            "sorry",
+            "xin lỗi bạn",
+            "xin lỗi nhé",
+        },
+        [
+            "Không sao đâu bạn! Có gì mình giúp được không?",
+            "Không sao cả, đừng ngại nhé. Bạn cần hỏi gì cứ hỏi mình.",
+        ],
+    ),
 }
 
 _SMALL_TALK_PUNCT_RE = re.compile(r"[!?.,;:~…]+")
-_SMALL_TALK_MAX_LEN = 24  # chars — anything longer is never pure small talk
+_SMALL_TALK_MAX_LEN = 40  # chars — anything longer is never pure small talk
 
 
 def detect_small_talk(message: str) -> str | None:

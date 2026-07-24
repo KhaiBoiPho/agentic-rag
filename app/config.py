@@ -62,6 +62,11 @@ class Settings(BaseSettings):
     openrouter_chat_model: str = "anthropic/claude-3.5-sonnet"
     openrouter_embed_model: str = "openai/text-embedding-3-small"
     openrouter_research_model: str = "google/gemini-2.0-flash-exp:free"
+    # Cheap/fast model for the off-topic classifier (app/core/chat/topic_guard.py)
+    # — deliberately independent of openrouter_chat_model / the user's selected
+    # model, so an off-topic question gets intercepted before ever reaching
+    # whatever (possibly premium-tier) model the user picked for real answers.
+    openrouter_classifier_model: str = "openai/gpt-4o-mini"
     # Vision-capable model for OCR fallback on scanned/image-only PDF pages
     # (normal text/table extraction yields nothing for these).
     openrouter_vision_model: str = "google/gemini-2.0-flash-exp:free"
