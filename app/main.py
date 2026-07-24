@@ -108,16 +108,27 @@ def create_app() -> FastAPI:
         # cold-load cost on the first voice request. Backgrounded since
         # model load can take a couple seconds; failure (e.g. missing
         # faster-whisper install) shouldn't crash the app, only voice.
-        async def _load_whisper_safe():
-            from app.core.voice.local_whisper import LocalWhisperService
+        # Skipped entirely when STT_BACKEND=runpod — no local model, no GPU
+        # needed on this host, transcription happens on the RunPod endpoint
+        # instead (see app/core/voice/runpod_whisper.py).
+        if settings.stt_backend == "local":
 
-            try:
-                await asyncio.get_event_loop().run_in_executor(None, LocalWhisperService.get().load)
-                logger.info("local Whisper STT model ready")
-            except Exception as exc:
-                logger.warning(f"Local Whisper model failed to load: {exc} — voice STT unavailable")
+            async def _load_whisper_safe():
+                from app.core.voice.local_whisper import LocalWhisperService
 
-        asyncio.create_task(_load_whisper_safe())
+                try:
+                    await asyncio.get_event_loop().run_in_executor(
+                        None, LocalWhisperService.get().load
+                    )
+                    logger.info("local Whisper STT model ready")
+                except Exception as exc:
+                    logger.warning(
+                        f"Local Whisper model failed to load: {exc} — voice STT unavailable"
+                    )
+
+            asyncio.create_task(_load_whisper_safe())
+        else:
+            logger.info(f"STT_BACKEND={settings.stt_backend} — skipping local Whisper model load")
 
         # gRPC server
         async def _start_grpc_safe():

@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     qdrant_host: str = "localhost"
     qdrant_port: int = 6333
     qdrant_api_key: str = ""
+    qdrant_https: bool = False  # True for Qdrant Cloud (requires TLS)
     qdrant_collection_name: str = "agentic_rag_chunks"
 
     # ─── RabbitMQ ────────────────────────────────────────────────────────────
@@ -66,10 +67,20 @@ class Settings(BaseSettings):
     # (normal text/table extraction yields nothing for these).
     openrouter_vision_model: str = "google/gemini-2.0-flash-exp:free"
 
-    # ─── STT — local Whisper (faster-whisper/CTranslate2), no external API ───
+    # ─── STT ─────────────────────────────────────────────────────────────────
+    # "local" loads faster-whisper in-process (needs a CUDA host for anything
+    # bigger than "base" at usable latency). "runpod" calls out to a RunPod
+    # Serverless GPU endpoint (see runpod/whisper-stt/) instead — the way to
+    # get GPU Whisper on a host with no GPU of its own (e.g. Railway).
+    stt_backend: Literal["local", "runpod"] = "local"
+
     whisper_model_size: str = "base"
     whisper_device: Literal["cpu", "cuda"] = "cpu"
     whisper_compute_type: str = "int8"  # int8 for CPU; float16 recommended on GPU
+
+    runpod_api_key: str = ""
+    runpod_stt_endpoint_id: str = ""
+    runpod_base_url: str = "https://api.runpod.ai/v2"
 
     # ─── Firecrawl ───────────────────────────────────────────────────────────
     firecrawl_api_key: str = ""

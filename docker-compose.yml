@@ -76,17 +76,19 @@ services:
       - hf_cache:/root/.cache/huggingface
     networks:
       - agentic-net
-    # GPU passthrough for local Whisper STT (WHISPER_DEVICE=cuda in .env).
-    # Only works against the native Docker Engine (`docker context use
-    # default`) — Docker Desktop's VM-based engine on this host has no GPU
-    # passthrough configured. Run compose commands under the native context.
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+    # No GPU reservation here anymore — STT moved to a RunPod Serverless GPU
+    # endpoint (STT_BACKEND=runpod, see runpod/whisper-stt/), so the app
+    # container itself no longer needs GPU passthrough. If you switch back
+    # to STT_BACKEND=local with WHISPER_DEVICE=cuda, re-add:
+    #   deploy:
+    #     resources:
+    #       reservations:
+    #         devices:
+    #           - driver: nvidia
+    #             count: 1
+    #             capabilities: [gpu]
+    # (only works against the native Docker Engine — `docker context use
+    # default` — Docker Desktop's VM-based engine has no GPU passthrough.)
 
   # ─── PostgreSQL ────────────────────────────────────────────────────────────
   postgres:

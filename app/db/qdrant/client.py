@@ -31,6 +31,7 @@ class QdrantStore:
         self._client = AsyncQdrantClient(
             host=settings.qdrant_host,
             port=settings.qdrant_port,
+            https=settings.qdrant_https,
             api_key=settings.qdrant_api_key or None,
             check_compatibility=False,
         )
@@ -44,6 +45,7 @@ class QdrantStore:
             self._client = AsyncQdrantClient(
                 host=settings.qdrant_host,
                 port=settings.qdrant_port,
+                https=settings.qdrant_https,
                 api_key=settings.qdrant_api_key or None,
                 check_compatibility=False,
             )
