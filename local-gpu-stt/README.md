@@ -30,19 +30,19 @@ Default model is plain Whisper "medium". For Vietnamese, PhoWhisper
 `WHISPER_MODEL_SIZE` to `phowhisper-tiny` / `phowhisper-base` /
 `phowhisper-small` / `phowhisper-medium` / `phowhisper-large` to use it
 instead (downloads a community CTranslate2 conversion automatically, see
-`resolve_model_path()` in `server.py`). **`phowhisper-medium` is the
-recommended default** — per VinAI's published benchmark
-([arXiv:2406.02555](https://arxiv.org/pdf/2406.02555)), it's within
-0.5 WER points of `phowhisper-large` (769M vs 1.55B params — not worth
-the extra weight) while `phowhisper-base` trails noticeably on noisy/
-real-world audio (~43% WER vs ~27% for medium on the harder VLSP
-Task-2 benchmark).
+`resolve_model_path()` in `server.py`). **`phowhisper-large` is the
+current default here** — VinAI's published benchmark
+([arXiv:2406.02555](https://arxiv.org/pdf/2406.02555)) shows medium and
+large very close on paper, but real-world testing on this project found
+medium still making more errors than acceptable, so large is used
+despite the extra weight (1.55B params, ~3GB download, somewhat slower
+inference than medium).
 
 ```bash
-WHISPER_MODEL_SIZE=phowhisper-medium STT_SECRET=pick-something-only-you-know python server.py
+WHISPER_MODEL_SIZE=phowhisper-large STT_SECRET=pick-something-only-you-know python server.py
 ```
 
-First run downloads+converts the model (~1.5GB for medium) into
+First run downloads+converts the model (~3GB for large) into
 `~/.cache/huggingface` — subsequent runs are instant. Server listens on
 `:8001`. Sanity check: `curl http://localhost:8001/health`.
 

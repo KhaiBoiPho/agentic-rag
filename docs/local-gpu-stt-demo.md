@@ -23,17 +23,16 @@ source .venv/bin/activate
 
 export LD_LIBRARY_PATH="/home/khai06/miniconda3/envs/khai-env/lib/python3.11/site-packages/nvidia/cudnn/lib:$LD_LIBRARY_PATH"
 
-WHISPER_MODEL_SIZE=phowhisper-medium STT_SECRET=matkhau-tuychon python server.py
+WHISPER_MODEL_SIZE=phowhisper-large STT_SECRET=matkhau-tuychon python server.py
 ```
 
-Đang dùng **PhoWhisper medium** (fine-tune tiếng Việt của VinAI) — theo
-benchmark chính thức (arXiv:2406.02555), medium gần như đạt độ chính xác
-của bản large (WER chênh <0.5 điểm ở mọi tập test) nhưng nhẹ hơn nhiều
-(769M so với 1.55B tham số), trong khi base kém hẳn ở điều kiện nhiễu thực
-tế (WER ~43% so với ~27% của medium ở tập test khó) — không đáng đánh đổi
-khi đã có GPU. Lần đầu chạy sẽ tự tải bản CTranslate2 convert sẵn từ
-`quocphu/PhoWhisper-ct2-FasterWhisper` (~1.5GB cho medium), các lần sau
-dùng cache, không tải lại.
+Đang dùng **PhoWhisper large** — benchmark chính thức (arXiv:2406.02555)
+cho thấy medium/large chênh nhau rất ít, nhưng test thực tế trên giọng
+đọc thật thì medium vẫn sai nhiều hơn mong muốn, nên chuyển hẳn sang
+large cho chắc. Lần đầu chạy sẽ tự tải bản CTranslate2 convert sẵn từ
+`quocphu/PhoWhisper-ct2-FasterWhisper` (~3GB cho large — lâu hơn đáng kể
+so với medium), các lần sau dùng cache, không tải lại. Suy luận chậm
+hơn medium 1 chút nhưng vẫn ổn trên GPU rời (RTX 3070).
 
 Đợi đến khi thấy dòng:
 ```
