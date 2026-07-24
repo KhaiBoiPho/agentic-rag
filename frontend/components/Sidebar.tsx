@@ -42,7 +42,7 @@ export default function Sidebar() {
   return (
     <aside className="flex h-full w-72 shrink-0 flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
       <div className="flex items-center gap-2 px-4 py-4">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-white">🏗️</div>
+        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-600 text-white">🏗️</div>
         <div className="text-sm font-semibold leading-tight">
           Agentic RAG
           <div className="text-xs font-normal text-slate-500">Vật liệu xây dựng</div>
@@ -51,7 +51,7 @@ export default function Sidebar() {
 
       <button
         onClick={newChat}
-        className="mx-4 mb-2 rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
+        className="mx-4 mb-2 rounded-full bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
       >
         + Trò chuyện mới
       </button>

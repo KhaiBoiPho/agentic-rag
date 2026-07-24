@@ -62,7 +62,7 @@ export default function UsagePage() {
             {usage.daily.map((d) => (
               <div key={d.date} className="flex flex-1 flex-col items-center gap-1" title={`${d.date}: ${fmtUsd(d.cost_usd)}`}>
                 <div
-                  className="w-full rounded-t bg-brand-500"
+                  className="w-full rounded-t bg-brand-600"
                   style={{ height: `${Math.max((d.cost_usd / maxCost) * 100, 2)}%` }}
                 />
                 <span className="rotate-0 text-[9px] text-slate-400">{d.date.slice(5)}</span>
@@ -76,7 +76,7 @@ export default function UsagePage() {
           <h2 className="mb-3 text-sm font-semibold text-slate-600 dark:text-slate-300">Lịch sử</h2>
           <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
             <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 text-slate-500 dark:bg-slate-800/60">
+              <thead className="bg-canvas-soft text-slate-500 dark:bg-slate-800/60">
                 <tr>
                   <th className="px-3 py-2">Model</th>
                   <th className="px-3 py-2">Prompt</th>
@@ -90,11 +90,11 @@ export default function UsagePage() {
                 {usage.history.map((h) => (
                   <tr key={h.id}>
                     <td className="px-3 py-2 font-medium">{h.model}</td>
-                    <td className="px-3 py-2">{h.prompt_tokens}</td>
-                    <td className="px-3 py-2">{h.completion_tokens}</td>
-                    <td className="px-3 py-2">{fmtUsd(h.cost_usd)}</td>
-                    <td className="px-3 py-2">{fmtMs(h.duration_ms)}</td>
-                    <td className="px-3 py-2 text-slate-400">
+                    <td className="tabular-money px-3 py-2">{h.prompt_tokens}</td>
+                    <td className="tabular-money px-3 py-2">{h.completion_tokens}</td>
+                    <td className="tabular-money px-3 py-2">{fmtUsd(h.cost_usd)}</td>
+                    <td className="tabular-money px-3 py-2">{fmtMs(h.duration_ms)}</td>
+                    <td className="tabular-money px-3 py-2 text-slate-400">
                       {new Date(h.created_at * 1000).toLocaleString('vi-VN')}
                     </td>
                   </tr>
@@ -117,9 +117,9 @@ export default function UsagePage() {
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-800">
+    <div className="rounded-xl border border-hairline p-3 dark:border-slate-800">
       <p className="text-[11px] text-slate-400">{label}</p>
-      <p className="mt-1 text-base font-semibold">{value}</p>
+      <p className="tabular-money mt-1 text-base font-semibold">{value}</p>
     </div>
   );
 }

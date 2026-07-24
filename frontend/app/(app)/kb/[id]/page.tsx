@@ -111,7 +111,7 @@ export default function KbDetailPage({ params }: { params: { id: string } }) {
           <div className="mt-6 rounded-xl border border-dashed border-slate-300 p-4 text-sm dark:border-slate-700">
             <label className="flex cursor-pointer items-center gap-2">
               <input ref={fileInputRef} type="file" onChange={onUpload} disabled={uploading} className="hidden" />
-              <span className="rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700">
+              <span className="rounded-full bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700">
                 {uploading ? 'Đang tải lên…' : 'Tải lên tài liệu'}
               </span>
               <span className="text-xs text-slate-400">PDF, DOCX, TXT…</span>

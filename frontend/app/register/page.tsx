@@ -35,9 +35,9 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="flex h-full items-center justify-center px-4">
-      <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-8 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <h1 className="text-xl font-semibold">Tạo tài khoản</h1>
+    <div className="gradient-mesh flex h-full items-center justify-center px-4">
+      <div className="w-full max-w-sm rounded-2xl border border-hairline bg-canvas p-8 shadow-[0_8px_24px_rgba(0,55,112,0.08),0_2px_6px_rgba(0,55,112,0.04)] dark:border-slate-800 dark:bg-slate-900">
+        <h1 className="text-xl font-semibold tracking-tight">Tạo tài khoản</h1>
         <p className="mt-1 text-sm text-slate-500">Agentic RAG — Trợ lý vật liệu xây dựng</p>
         <form onSubmit={onSubmit} className="mt-6 space-y-4">
           <div>
@@ -45,7 +45,7 @@ export default function RegisterPage() {
             <input
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-brand-500 dark:border-slate-700"
+              className="w-full rounded-lg border border-slate-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-brand-600 dark:border-slate-700"
               placeholder="Nguyễn Văn A"
             />
           </div>
@@ -56,7 +56,7 @@ export default function RegisterPage() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-brand-500 dark:border-slate-700"
+              className="w-full rounded-lg border border-slate-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-brand-600 dark:border-slate-700"
               placeholder="you@example.com"
             />
           </div>
@@ -68,7 +68,7 @@ export default function RegisterPage() {
               minLength={8}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-brand-500 dark:border-slate-700"
+              className="w-full rounded-lg border border-slate-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-brand-600 dark:border-slate-700"
               placeholder="••••••••"
             />
           </div>
@@ -76,7 +76,7 @@ export default function RegisterPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-brand-700 disabled:opacity-60"
+            className="w-full rounded-full bg-brand-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-brand-700 disabled:opacity-60"
           >
             {loading ? 'Đang tạo…' : 'Đăng ký'}
           </button>

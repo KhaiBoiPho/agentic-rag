@@ -52,18 +52,18 @@ export default function KbListPage() {
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Tên cơ sở tri thức"
-            className="min-w-[180px] flex-1 rounded-lg border border-slate-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-brand-500 dark:border-slate-700"
+            className="min-w-[180px] flex-1 rounded-lg border border-slate-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-brand-600 dark:border-slate-700"
           />
           <input
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Mô tả (tuỳ chọn)"
-            className="min-w-[180px] flex-1 rounded-lg border border-slate-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-brand-500 dark:border-slate-700"
+            className="min-w-[180px] flex-1 rounded-lg border border-slate-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-brand-600 dark:border-slate-700"
           />
           <button
             type="submit"
             disabled={creating || !name.trim()}
-            className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-60"
+            className="rounded-full bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-60"
           >
             Tạo mới
           </button>

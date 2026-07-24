@@ -61,7 +61,7 @@ export default function CostForm({
   return (
     <form
       onSubmit={handleSubmit}
-      className="mt-2 max-w-md space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60"
+      className="mt-2 max-w-md space-y-3 rounded-xl border border-hairline bg-canvas-cream/60 p-4 dark:border-slate-700 dark:bg-slate-800/60"
     >
       <p className="text-sm font-semibold">{form.title || 'Dự toán chi phí xây dựng'}</p>
       {fields.map((f) => {
@@ -102,7 +102,7 @@ export default function CostForm({
       <button
         type="submit"
         disabled={disabled}
-        className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-60"
+        className="rounded-full bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-60"
       >
         Tính toán
       </button>

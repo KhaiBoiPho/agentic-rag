@@ -122,7 +122,7 @@ export default function Composer({
             disabled={disabled}
             rows={1}
             placeholder="Nhập câu hỏi… (Enter để gửi, Shift+Enter xuống dòng)"
-            className="max-h-40 flex-1 resize-none rounded-xl border border-slate-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-brand-500 disabled:opacity-60 dark:border-slate-700"
+            className="max-h-40 flex-1 resize-none rounded-xl border border-slate-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-brand-600 disabled:opacity-60 dark:border-slate-700"
           />
           <button
             type="button"
@@ -142,7 +142,7 @@ export default function Composer({
             type="button"
             onClick={submit}
             disabled={disabled || !text.trim()}
-            className="h-10 shrink-0 rounded-xl bg-brand-600 px-4 text-sm font-medium text-white transition hover:bg-brand-700 disabled:opacity-50"
+            className="h-10 shrink-0 rounded-full bg-brand-600 px-4 text-sm font-medium text-white transition hover:bg-brand-700 disabled:opacity-50"
           >
             Gửi
           </button>

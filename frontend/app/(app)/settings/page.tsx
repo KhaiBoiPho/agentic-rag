@@ -68,7 +68,7 @@ export default function SettingsPage() {
             step={64}
             value={maxTokens}
             onChange={(e) => setMaxTokens(Number(e.target.value))}
-            className="w-40 rounded-lg border border-slate-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-brand-500 dark:border-slate-700"
+            className="w-40 rounded-lg border border-slate-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-brand-600 dark:border-slate-700"
           />
         </div>
       </div>
