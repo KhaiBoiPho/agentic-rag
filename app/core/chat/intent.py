@@ -12,6 +12,7 @@ app/api/v1/chat.py are needed beyond that.
 
 from __future__ import annotations
 
+import random
 import re
 
 FORM_SCHEMAS: dict[str, dict] = {
@@ -72,6 +73,83 @@ _INTENT_WORD_GROUPS: dict[str, list[list[str]]] = {
         ["giá", "chi phí", "bao nhiêu tiền", "tốn bao nhiêu", "hết bao nhiêu", "dự toán"],
     ],
 }
+
+# ─── Small talk — skip the LLM entirely to save API cost/latency ──────────
+#
+# Deliberately EXACT-match only (whole normalized message must equal one of
+# these phrases), unlike the loose substring matching above — a substring
+# match on "chào" would also fire on "chào bạn, giá thép hôm nay bao nhiêu"
+# and silently eat a real question behind a canned greeting. The length cap
+# in detect_small_talk() is a second guard against that.
+_SMALL_TALK: dict[str, tuple[set[str], list[str]]] = {
+    "greeting": (
+        {
+            "chào",
+            "chào bạn",
+            "chào shop",
+            "xin chào",
+            "alo",
+            "hi",
+            "hello",
+            "hey",
+            "helo",
+            "hí",
+        },
+        [
+            "Chào bạn! Mình có thể giúp gì về vật liệu xây dựng hay dự toán chi phí hôm nay?",
+            "Xin chào! Bạn cần hỏi gì về vật liệu xây dựng hoặc dự toán chi phí không?",
+        ],
+    ),
+    "farewell": (
+        {
+            "tạm biệt",
+            "chào tạm biệt",
+            "bye",
+            "bye bye",
+            "goodbye",
+            "hẹn gặp lại",
+            "byebye",
+        },
+        [
+            "Tạm biệt bạn! Cần gì cứ quay lại hỏi mình nhé.",
+            "Chào tạm biệt! Chúc bạn một ngày tốt lành.",
+        ],
+    ),
+    "thanks": (
+        {
+            "cảm ơn",
+            "cám ơn",
+            "cảm ơn bạn",
+            "cám ơn bạn",
+            "cảm ơn nhé",
+            "thanks",
+            "thank you",
+            "thank",
+            "ok cảm ơn",
+            "oke cảm ơn",
+        },
+        [
+            "Không có gì! Rất vui được giúp bạn.",
+            "Dạ không có gì, cần gì cứ hỏi mình tiếp nhé!",
+        ],
+    ),
+}
+
+_SMALL_TALK_PUNCT_RE = re.compile(r"[!?.,;:~…]+")
+_SMALL_TALK_MAX_LEN = 24  # chars — anything longer is never pure small talk
+
+
+def detect_small_talk(message: str) -> str | None:
+    """Returns a canned reply for pure greetings/farewells/thanks, or None
+    if the message should go through the normal (LLM-backed) pipeline."""
+    normalized = _SMALL_TALK_PUNCT_RE.sub("", message.strip().lower()).strip()
+    if not normalized or len(normalized) > _SMALL_TALK_MAX_LEN:
+        return None
+    for phrases, responses in _SMALL_TALK.values():
+        if normalized in phrases:
+            return random.choice(responses)
+    return None
+
 
 _AREA_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*m\s*2", re.IGNORECASE)
 

@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from app.api.deps import SSE_HEADERS, CurrentUser
 from app.api.v1.config import load_skill_prompt
-from app.core.chat.intent import FORM_SCHEMAS, detect_intent, prefill_from_text
+from app.core.chat.intent import FORM_SCHEMAS, detect_intent, detect_small_talk, prefill_from_text
 from app.core.chunking.base import count_tokens
 from app.core.llm.openrouter import OpenRouterClient
 from app.core.retrieval.retriever import Retriever
@@ -183,6 +183,29 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
                     "done": False,
                 }
             )
+            yield _sse({"type": "text", "delta": "", "done": True, "sources": []})
+            return
+
+        # ─── Small talk — skip the LLM entirely to save API cost/latency ────
+        # Pure greetings/farewells/thanks ("chào", "cảm ơn"...) get a canned
+        # reply with zero model calls — see app/core/chat/intent.py for why
+        # this is an exact-match check, not substring, to avoid swallowing
+        # real questions that happen to start with a greeting.
+        small_talk_reply = detect_small_talk(body.message)
+        if small_talk_reply is not None:
+            if body.conversation_id:
+                try:
+                    await msg_repo.ensure_conversation(
+                        body.conversation_id,
+                        str(current_user.id),
+                        kb_id=body.kb_id,
+                        title=body.message[:512],
+                    )
+                    await msg_repo.add(body.conversation_id, "user", body.message)
+                    await msg_repo.add(body.conversation_id, "assistant", small_talk_reply)
+                except Exception:
+                    pass
+            yield _sse({"type": "text", "delta": small_talk_reply, "done": False})
             yield _sse({"type": "text", "delta": "", "done": True, "sources": []})
             return
 
