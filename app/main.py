@@ -108,9 +108,9 @@ def create_app() -> FastAPI:
         # cold-load cost on the first voice request. Backgrounded since
         # model load can take a couple seconds; failure (e.g. missing
         # faster-whisper install) shouldn't crash the app, only voice.
-        # Skipped entirely when STT_BACKEND=runpod — no local model, no GPU
-        # needed on this host, transcription happens on the RunPod endpoint
-        # instead (see app/core/voice/runpod_whisper.py).
+        # Skipped entirely when STT_BACKEND=http — no local model, no GPU
+        # needed on this host, transcription happens on a remote GPU box
+        # instead (see app/core/voice/http_whisper.py, local-gpu-stt/).
         if settings.stt_backend == "local":
 
             async def _load_whisper_safe():
