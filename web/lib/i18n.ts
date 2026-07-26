@@ -79,6 +79,11 @@ const vi = {
     sourcesLabel: "Nguồn",
     researching: "Đang nghiên cứu",
     research: "Nghiên cứu",
+    pin: "Ghim tin nhắn",
+    unpin: "Bỏ ghim",
+    deleteMsg: "Xoá tin nhắn",
+    pinned: "Đã ghim",
+    confirmDeleteMsg: "Xoá tin nhắn này?",
   },
   costForm: {
     title: "Dự toán chi phí xây dựng",
@@ -145,6 +150,7 @@ const vi = {
     saved: "Đã lưu",
     saving: "Đang lưu…",
     noResults: "Không tìm thấy ghi chú phù hợp.",
+    toggleList: "Ẩn/hiện danh sách ghi chú",
   },
   projects: {
     title: "Dự án",
@@ -177,6 +183,11 @@ const vi = {
     thCost: "Chi phí",
     thTime: "Thời gian",
     empty: "Chưa có dữ liệu sử dụng.",
+    byModel: "Phân bổ theo mô hình",
+    byModelSub: "Tổng chi phí theo từng mô hình đã dùng.",
+    vsYesterday: "so với hôm qua",
+    avgLine: "TB",
+    noChange: "không đổi",
   },
   settings: {
     title: "Cài đặt",
@@ -301,6 +312,11 @@ const en = {
     sourcesLabel: "Sources",
     researching: "Researching",
     research: "Research",
+    pin: "Pin message",
+    unpin: "Unpin",
+    deleteMsg: "Delete message",
+    pinned: "Pinned",
+    confirmDeleteMsg: "Delete this message?",
   },
   costForm: {
     title: "Construction cost estimate",
@@ -367,6 +383,7 @@ const en = {
     saved: "Saved",
     saving: "Saving…",
     noResults: "No matching notes.",
+    toggleList: "Toggle notes list",
   },
   projects: {
     title: "Projects",
@@ -399,6 +416,11 @@ const en = {
     thCost: "Cost",
     thTime: "Duration",
     empty: "No usage data yet.",
+    byModel: "Cost by model",
+    byModelSub: "Total cost broken down by model used.",
+    vsYesterday: "vs yesterday",
+    avgLine: "avg",
+    noChange: "no change",
   },
   settings: {
     title: "Settings",

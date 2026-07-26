@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import { ago } from "@/lib/format";
 import { useT } from "@/lib/i18n";
 import TopBar from "@/components/TopBar";
-import { Note as NoteIcon, Plus, Search, Trash } from "@/components/Icons";
+import { Note as NoteIcon, PanelLeft, Plus, Search, Trash } from "@/components/Icons";
 import type { Note } from "@/lib/types";
 
 export default function NotesPage() {
@@ -13,6 +13,7 @@ export default function NotesPage() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
+  const [listOpen, setListOpen] = useState(true);
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const [title, setTitle] = useState("");
@@ -91,46 +92,20 @@ export default function NotesPage() {
 
   return (
     <>
-      <TopBar title={t.notes.title} />
+      <TopBar
+        title={t.notes.title}
+        right={
+          <button
+            className="iconbtn"
+            onClick={() => setListOpen((v) => !v)}
+            aria-label={t.notes.toggleList}
+            title={t.notes.toggleList}
+          >
+            <PanelLeft />
+          </button>
+        }
+      />
       <div className="notes-shell">
-        <div className="notes-list">
-          <div className="notes-list-head">
-            <div className="notes-list-search">
-              <Search />
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.notes.searchPh} />
-            </div>
-            <button className="notes-list-new" onClick={createNote} aria-label={t.notes.newNote} title={t.notes.newNote}>
-              <Plus />
-            </button>
-          </div>
-          <div className="notes-list-count">{filtered.length}</div>
-          <div className="notes-list-scroll">
-            {loading ? (
-              <div className="center-load" style={{ padding: 30 }}>
-                <span className="spinner" />
-              </div>
-            ) : filtered.length === 0 ? (
-              <div className="empty" style={{ padding: "30px 12px" }}>
-                {q ? t.notes.noResults : t.notes.empty}
-              </div>
-            ) : (
-              filtered.map((n) => (
-                <button
-                  key={n.id}
-                  className={`note-card${activeId === n.id ? " on" : ""}`}
-                  onClick={() => select(n)}
-                >
-                  <span className="nt">{n.title || t.notes.untitled}</span>
-                  <span className="np">
-                    <span className="d">{ago(n.updated_at)}</span>
-                    <span className="prev">{(n.content || "").replace(/\s+/g, " ").trim() || "—"}</span>
-                  </span>
-                </button>
-              ))
-            )}
-          </div>
-        </div>
-
         <div className="notes-editor">
           {!activeId ? (
             <div className="notes-editor-empty">
@@ -177,6 +152,44 @@ export default function NotesPage() {
               </div>
             </>
           )}
+        </div>
+
+        <div className={`notes-list${listOpen ? "" : " collapsed"}`}>
+          <div className="notes-list-head">
+            <div className="notes-list-search">
+              <Search />
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.notes.searchPh} />
+            </div>
+            <button className="notes-list-new" onClick={createNote} aria-label={t.notes.newNote} title={t.notes.newNote}>
+              <Plus />
+            </button>
+          </div>
+          <div className="notes-list-count">{filtered.length}</div>
+          <div className="notes-list-scroll">
+            {loading ? (
+              <div className="center-load" style={{ padding: 30 }}>
+                <span className="spinner" />
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="empty" style={{ padding: "30px 12px" }}>
+                {q ? t.notes.noResults : t.notes.empty}
+              </div>
+            ) : (
+              filtered.map((n) => (
+                <button
+                  key={n.id}
+                  className={`note-card${activeId === n.id ? " on" : ""}`}
+                  onClick={() => select(n)}
+                >
+                  <span className="nt">{n.title || t.notes.untitled}</span>
+                  <span className="np">
+                    <span className="d">{ago(n.updated_at)}</span>
+                    <span className="prev">{(n.content || "").replace(/\s+/g, " ").trim() || "—"}</span>
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
         </div>
       </div>
     </>

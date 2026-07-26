@@ -1,36 +1,46 @@
 "use client";
 
+import { memo } from "react";
 import { useT } from "@/lib/i18n";
 import { isRagSource, isWebSource, type ChatMessage, type RagSource, type WebSource } from "@/lib/types";
-import { Book, Globe, Mic, Warn } from "../Icons";
+import { Book, Globe, Mic, Pin, Trash, Warn } from "../Icons";
 import Markdown from "./Markdown";
 import ResearchPanel from "./ResearchPanel";
 import CostForm from "./CostForm";
 
-export default function MessageBubble({
-  msg,
-  onSubmitForm,
-}: {
+interface Props {
   msg: ChatMessage;
   onSubmitForm: (formId: string, data: Record<string, unknown>) => void;
-}) {
+  onTogglePin: (id: string) => void;
+  onDelete: (id: string) => void;
+}
+
+function MessageBubbleImpl({ msg, onSubmitForm, onTogglePin, onDelete }: Props) {
   const { t, lang } = useT();
 
   if (msg.role === "user") {
     return (
-      <div className="msg user">
+      <div className={`msg user${msg.pinned ? " pinned" : ""}`}>
         <span className="g">{lang === "vi" ? "Bạn" : "You"}</span>
-        <div className="bubble">
-          <div className="meta">
-            {msg.viaVoice && (
-              <span className="badge voice" style={{ padding: "1px 7px" }}>
-                <Mic /> {t.chat.badgeVoice}
-              </span>
-            )}
+        <div className="msg-col">
+          <div className="bubble">
+            <div className="meta">
+              {msg.pinned && (
+                <span className="badge pin-badge">
+                  <Pin width={11} height={11} /> {t.chat.pinned}
+                </span>
+              )}
+              {msg.viaVoice && (
+                <span className="badge voice" style={{ padding: "1px 7px" }}>
+                  <Mic /> {t.chat.badgeVoice}
+                </span>
+              )}
+            </div>
+            <div className="md streaming" style={{ whiteSpace: "pre-wrap" }}>
+              {msg.content}
+            </div>
           </div>
-          <div className="md streaming" style={{ whiteSpace: "pre-wrap" }}>
-            {msg.content}
-          </div>
+          <MsgActions msg={msg} onTogglePin={onTogglePin} onDelete={onDelete} />
         </div>
       </div>
     );
@@ -40,64 +50,101 @@ export default function MessageBubble({
   const web = (msg.sources ?? []).filter(isWebSource) as WebSource[];
 
   return (
-    <div className="msg assistant">
+    <div className={`msg assistant${msg.pinned ? " pinned" : ""}`}>
       <span className="g">Cố</span>
-      <div className="bubble">
-        <Badges msg={msg} hasRag={rag.length > 0} />
+      <div className="msg-col">
+        <div className="bubble">
+          <Badges msg={msg} hasRag={rag.length > 0} />
 
-        {msg.researchSteps && msg.researchSteps.length > 0 && (
-          <ResearchPanel
-            steps={msg.researchSteps}
-            progress={msg.researchProgress ?? 0}
-            running={!!msg.streaming}
-          />
-        )}
+          {msg.researchSteps && msg.researchSteps.length > 0 && (
+            <ResearchPanel
+              steps={msg.researchSteps}
+              progress={msg.researchProgress ?? 0}
+              running={!!msg.streaming}
+            />
+          )}
 
-        {msg.content && (
-          <div style={{ marginTop: msg.researchSteps?.length ? 12 : 0 }}>
-            <Markdown content={msg.content} streaming={msg.streaming} webSources={web} />
-          </div>
-        )}
+          {msg.content && (
+            <div style={{ marginTop: msg.researchSteps?.length ? 12 : 0 }}>
+              <Markdown content={msg.content} streaming={msg.streaming} webSources={web} />
+            </div>
+          )}
 
-        {msg.pendingForm && (
-          <CostForm form={msg.pendingForm} disabled={msg.streaming} onSubmit={onSubmitForm} />
-        )}
+          {msg.pendingForm && (
+            <CostForm form={msg.pendingForm} disabled={msg.streaming} onSubmit={onSubmitForm} />
+          )}
 
-        {msg.error && (
-          <div className="cite-note" style={{ marginTop: 8 }}>
-            <Warn width={12} height={12} /> {msg.error}
-          </div>
-        )}
+          {msg.error && (
+            <div className="cite-note" style={{ marginTop: 8 }}>
+              <Warn width={12} height={12} /> {msg.error}
+            </div>
+          )}
 
-        {!msg.streaming && rag.length > 0 && (
-          <div className="cite-row">
-            {rag.map((s, i) => (
-              <span className="chip" key={s.chunk_id || i} title={s.content?.slice(0, 200)}>
-                <span className="idx">{i + 1}</span>
-                <span className="ellip" style={{ maxWidth: 220 }}>
-                  {s.document_name}
+          {!msg.streaming && rag.length > 0 && (
+            <div className="cite-row">
+              {rag.map((s, i) => (
+                <span className="chip" key={s.chunk_id || i} title={s.content?.slice(0, 200)}>
+                  <span className="idx">{i + 1}</span>
+                  <span className="ellip" style={{ maxWidth: 220 }}>
+                    {s.document_name}
+                  </span>
+                  <span className="score">{Math.round((s.score ?? 0) * 100)}%</span>
                 </span>
-                <span className="score">{Math.round((s.score ?? 0) * 100)}%</span>
-              </span>
-            ))}
-          </div>
-        )}
-
-        {!msg.streaming && web.length > 0 && (
-          <div className="sources-foot">
-            <div className="lbl">{t.chat.sourcesLabel}</div>
-            <ol>
-              {web.map((s, i) => (
-                <li key={i}>
-                  <a href={s.url} target="_blank" rel="noreferrer noopener">
-                    {s.title || s.url}
-                  </a>
-                </li>
               ))}
-            </ol>
-          </div>
-        )}
+            </div>
+          )}
+
+          {!msg.streaming && web.length > 0 && (
+            <div className="sources-foot">
+              <div className="lbl">{t.chat.sourcesLabel}</div>
+              <ol>
+                {web.map((s, i) => (
+                  <li key={i}>
+                    <a href={s.url} target="_blank" rel="noreferrer noopener">
+                      {s.title || s.url}
+                    </a>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+        </div>
+        {!msg.streaming && <MsgActions msg={msg} onTogglePin={onTogglePin} onDelete={onDelete} />}
       </div>
+    </div>
+  );
+}
+
+function MsgActions({
+  msg,
+  onTogglePin,
+  onDelete,
+}: {
+  msg: ChatMessage;
+  onTogglePin: (id: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  const { t } = useT();
+  return (
+    <div className="msg-actions">
+      <button
+        className={`msg-action-btn${msg.pinned ? " active" : ""}`}
+        onClick={() => onTogglePin(msg.id)}
+        aria-label={msg.pinned ? t.chat.unpin : t.chat.pin}
+        title={msg.pinned ? t.chat.unpin : t.chat.pin}
+        type="button"
+      >
+        <Pin width={14} height={14} />
+      </button>
+      <button
+        className="msg-action-btn"
+        onClick={() => onDelete(msg.id)}
+        aria-label={t.chat.deleteMsg}
+        title={t.chat.deleteMsg}
+        type="button"
+      >
+        <Trash width={14} height={14} />
+      </button>
     </div>
   );
 }
@@ -128,9 +175,14 @@ function Badges({ msg, hasRag }: { msg: ChatMessage; hasRag: boolean }) {
     badge = <span className="badge plain">{t.chat.badgePlain}</span>;
   }
 
-  if (!badge && !msg.viaVoice) return null;
+  if (!badge && !msg.viaVoice && !msg.pinned) return null;
   return (
     <div className="badge-row">
+      {msg.pinned && (
+        <span className="badge pin-badge">
+          <Pin width={11} height={11} /> {t.chat.pinned}
+        </span>
+      )}
       {badge}
       {msg.viaVoice && (
         <span className="badge voice">
@@ -140,3 +192,5 @@ function Badges({ msg, hasRag }: { msg: ChatMessage; hasRag: boolean }) {
     </div>
   );
 }
+
+export default memo(MessageBubbleImpl);

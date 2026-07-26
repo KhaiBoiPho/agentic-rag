@@ -91,13 +91,13 @@ input,textarea,select{font-family:inherit;color:inherit;}
    component so new controls inherit it by just being one of these tags. */
 .btn,.iconbtn,.ibtn,.icon-x,.nav a,.kb-row,.conv-row,.newbtn,.model-opt,
 .item-card,.chip,.chart .bar,.welcome .suggest button,.note-card,.rph,
-.theme-toggle,.switch,.notes-list-search input,.modes button{
+.theme-toggle,.switch,.notes-list-search input,.modes button,.msg-action-btn,.side-toggle{
   transition:background-color .15s ease,border-color .15s ease,color .15s ease,
     transform .1s ease,box-shadow .15s ease,opacity .15s ease;
 }
 .btn:active,.iconbtn:active,.ibtn:active,.icon-x:active,.newbtn:active,
 .model-opt:active,.chip:active,.note-card:active,.rph:active,.modes button:active,
-.welcome .suggest button:active,.switch:active{
+.welcome .suggest button:active,.switch:active,.msg-action-btn:active,.side-toggle:active{
   transform:scale(.96);
 }
 .kb-row:active,.conv-row:active,.nav a:active{transform:scale(.985);}

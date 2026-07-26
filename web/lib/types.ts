@@ -145,6 +145,7 @@ export interface ChatMessage {
   researchProgress?: number;
   viaVoice?: boolean;
   error?: string;
+  pinned?: boolean;
 }
 
 export interface Conversation {

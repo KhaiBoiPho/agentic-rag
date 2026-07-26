@@ -11,6 +11,10 @@ import { Book, Globe } from "../Icons";
 import MessageBubble from "./MessageBubble";
 import Composer, { type SendOpts } from "./Composer";
 
+// Tick rate for the typewriter reveal — independent of how fast the network
+// delivers deltas, so bursty SSE chunks don't make the text "pop" in clumps.
+const REVEAL_MS = 18;
+
 export default function ChatView({ conversationId }: { conversationId: string }) {
   const { t } = useT();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -27,9 +31,25 @@ export default function ChatView({ conversationId }: { conversationId: string })
   const upsertConversation = useStore((s) => s.upsertConversation);
 
   const threadRef = useRef<HTMLDivElement>(null);
-  const bufRef = useRef<Record<string, string>>({});
   const busyRef = useRef(false);
   const [busy, setBusy] = useState(false);
+
+  // ── typewriter reveal ────────────────────────────────────────────────────
+  // bufRef holds the full target text as it arrives (network-speed).
+  // revealedRef holds what's currently on screen; a per-message interval
+  // eases it toward the target at a fixed cadence, catching up faster when
+  // the backlog grows so it never falls hopelessly behind a big chunk.
+  const bufRef = useRef<Record<string, string>>({});
+  const revealedRef = useRef<Record<string, string>>({});
+  const tickerRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
+  const finalizeRef = useRef<Record<string, () => void>>({});
+
+  useEffect(() => {
+    const tickers = tickerRef.current;
+    return () => {
+      Object.values(tickers).forEach(clearInterval);
+    };
+  }, []);
 
   const scrollDown = useCallback(() => {
     const el = threadRef.current;
@@ -45,21 +65,77 @@ export default function ChatView({ conversationId }: { conversationId: string })
   function patch(id: string, p: Partial<ChatMessage> | ((prev: ChatMessage) => Partial<ChatMessage>)) {
     setMessages((m) => m.map((x) => (x.id === id ? { ...x, ...(typeof p === "function" ? p(x) : p) } : x)));
   }
-  function append(id: string, delta: string) {
-    bufRef.current[id] = (bufRef.current[id] || "") + delta;
-    patch(id, (prev) => ({ content: prev.content + delta }));
-  }
   function addStep(id: string, step: ResearchStep) {
     patch(id, (prev) => ({ researchSteps: [...(prev.researchSteps || []), step] }));
   }
 
-  function setBusyState(v: boolean) {
-    busyRef.current = v;
-    setBusy(v);
+  function stopTicker(id: string) {
+    const timer = tickerRef.current[id];
+    if (timer) {
+      clearInterval(timer);
+      delete tickerRef.current[id];
+    }
+  }
+  function startTicker(id: string) {
+    if (tickerRef.current[id]) return;
+    tickerRef.current[id] = setInterval(() => {
+      const full = bufRef.current[id] || "";
+      const shown = revealedRef.current[id] || "";
+      if (shown.length < full.length) {
+        const backlog = full.length - shown.length;
+        const step = Math.max(1, Math.ceil(backlog / 10));
+        const next = full.slice(0, shown.length + step);
+        revealedRef.current[id] = next;
+        patch(id, { content: next });
+      } else {
+        const done = finalizeRef.current[id];
+        if (done) {
+          delete finalizeRef.current[id];
+          stopTicker(id);
+          done();
+        } else {
+          stopTicker(id);
+        }
+      }
+    }, REVEAL_MS);
+  }
+  /** Append a network delta to the target text; the ticker reveals it gradually. */
+  function append(id: string, delta: string) {
+    bufRef.current[id] = (bufRef.current[id] || "") + delta;
+    startTicker(id);
+  }
+  /** Reconcile the target text to an authoritative full string (e.g. research's "completed" event). */
+  function reconcile(id: string, full: string) {
+    bufRef.current[id] = full;
+    startTicker(id);
+  }
+  /** Apply a patch once the visible text has fully caught up to the target. */
+  function finalize(id: string, p: Partial<ChatMessage>) {
+    const full = bufRef.current[id] || "";
+    const shown = revealedRef.current[id] || "";
+    if (shown.length >= full.length) {
+      patch(id, p);
+    } else {
+      finalizeRef.current[id] = () => patch(id, p);
+      startTicker(id);
+    }
+  }
+  /** Skip straight to the full text (used on error, so nothing is lost mid-reveal). */
+  function forceFlush(id: string) {
+    const full = bufRef.current[id] || "";
+    revealedRef.current[id] = full;
+    stopTicker(id);
+    delete finalizeRef.current[id];
+    patch(id, { content: full });
+  }
+  function finalizeError(id: string, message: string) {
+    forceFlush(id);
+    patch(id, { streaming: false, error: message });
   }
 
   function assistantPlaceholder(id: string, extra: Partial<ChatMessage> = {}): ChatMessage {
     bufRef.current[id] = "";
+    revealedRef.current[id] = "";
     return { id, role: "assistant", content: "", streaming: true, ...extra };
   }
 
@@ -138,13 +214,13 @@ export default function ChatView({ conversationId }: { conversationId: string })
           if (ev.delta) append(aId, ev.delta);
           if (ev.done) {
             const rc = ev.rag_context ? { kind: ev.rag_context.kind, name: ev.rag_context.name } : null;
-            patch(aId, { streaming: false, sources: ev.sources ?? [], ragContext: rc });
+            finalize(aId, { streaming: false, sources: ev.sources ?? [], ragContext: rc });
             maybeSpeak(aId, opts.viaVoice);
           }
         }
       });
     } catch (e: any) {
-      patch(aId, { streaming: false, error: e?.message || t.chat.connectionError });
+      finalizeError(aId, e?.message || t.chat.connectionError);
     }
   }
 
@@ -158,15 +234,15 @@ export default function ChatView({ conversationId }: { conversationId: string })
         "/api/v1/search/web",
         { query, max_results: 6, scrape: false, context },
         (ev) => {
-          if (ev.error) return patch(aId, { streaming: false, error: ev.error });
+          if (ev.error) return finalizeError(aId, ev.error);
           if (ev.type === "sources") patch(aId, { sources: ev.sources ?? [] });
           else if (ev.type === "token") {
             if (ev.delta) append(aId, ev.delta);
-          } else if (ev.type === "done" || ev.done) patch(aId, { streaming: false });
+          } else if (ev.type === "done" || ev.done) finalize(aId, { streaming: false });
         },
       );
     } catch (e: any) {
-      patch(aId, { streaming: false, error: e?.message || t.chat.connectionError });
+      finalizeError(aId, e?.message || t.chat.connectionError);
     }
   }
 
@@ -187,7 +263,7 @@ export default function ChatView({ conversationId }: { conversationId: string })
           context,
         },
         (ev) => {
-          if (ev.error) return patch(aId, { streaming: false, error: ev.error });
+          if (ev.error) return finalizeError(aId, ev.error);
           const node: string = ev.node;
           const status: string = ev.status;
           if (typeof ev.progress === "number") patch(aId, { researchProgress: ev.progress });
@@ -195,13 +271,10 @@ export default function ChatView({ conversationId }: { conversationId: string })
           if (node === "response_generator" && status === "streaming") {
             if (ev.content) append(aId, ev.content);
           } else if (node === "response_generator" && status === "completed") {
-            if (ev.content) {
-              bufRef.current[aId] = ev.content;
-              patch(aId, { content: ev.content });
-            }
+            if (ev.content) reconcile(aId, ev.content);
             patch(aId, { sources: ev.sources ?? [] });
           } else if (node === "done" || ev.done) {
-            patch(aId, { streaming: false, researchProgress: 1 });
+            finalize(aId, { streaming: false, researchProgress: 1 });
           } else {
             addStep(aId, {
               node,
@@ -215,7 +288,7 @@ export default function ChatView({ conversationId }: { conversationId: string })
         },
       );
     } catch (e: any) {
-      patch(aId, { streaming: false, error: e?.message || t.chat.connectionError });
+      finalizeError(aId, e?.message || t.chat.connectionError);
     }
   }
 
@@ -223,7 +296,8 @@ export default function ChatView({ conversationId }: { conversationId: string })
   const onSend = useCallback(
     async (text: string, opts?: SendOpts) => {
       if (busyRef.current) return;
-      setBusyState(true);
+      busyRef.current = true;
+      setBusy(true);
       const isFirst = messages.length === 0;
       push({ id: crypto.randomUUID(), role: "user", content: text, viaVoice: opts?.viaVoice });
       if (isFirst) registerConversation(text);
@@ -232,7 +306,8 @@ export default function ChatView({ conversationId }: { conversationId: string })
         else if (mode === "research") await streamResearch(text);
         else await streamChat({ message: text, viaVoice: opts?.viaVoice });
       } finally {
-        setBusyState(false);
+        busyRef.current = false;
+        setBusy(false);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -242,16 +317,30 @@ export default function ChatView({ conversationId }: { conversationId: string })
   const onSubmitForm = useCallback(
     async (formId: string, data: Record<string, unknown>) => {
       if (busyRef.current) return;
-      setBusyState(true);
+      busyRef.current = true;
+      setBusy(true);
       setMessages((m) => m.map((x) => (x.pendingForm ? { ...x, pendingForm: undefined } : x)));
       try {
         await streamChat({ formSubmission: { form_id: formId, data } });
       } finally {
-        setBusyState(false);
+        busyRef.current = false;
+        setBusy(false);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [activeKbId, activeProjectId, settings],
+  );
+
+  const togglePin = useCallback((id: string) => {
+    setMessages((m) => m.map((x) => (x.id === id ? { ...x, pinned: !x.pinned } : x)));
+  }, []);
+
+  const deleteMessage = useCallback(
+    (id: string) => {
+      if (!confirm(t.chat.confirmDeleteMsg)) return;
+      setMessages((m) => m.filter((x) => x.id !== id));
+    },
+    [t],
   );
 
   const activeScope =
@@ -293,7 +382,13 @@ export default function ChatView({ conversationId }: { conversationId: string })
         ) : (
           <div className="thread-inner">
             {messages.map((m) => (
-              <MessageBubble key={m.id} msg={m} onSubmitForm={onSubmitForm} />
+              <MessageBubble
+                key={m.id}
+                msg={m}
+                onSubmitForm={onSubmitForm}
+                onTogglePin={togglePin}
+                onDelete={deleteMessage}
+              />
             ))}
           </div>
         )}

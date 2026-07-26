@@ -6,8 +6,9 @@ import Sidebar from "./Sidebar";
 
 interface ShellCtx {
   toggleSidebar: () => void;
+  collapsed: boolean;
 }
-const Ctx = createContext<ShellCtx>({ toggleSidebar: () => {} });
+const Ctx = createContext<ShellCtx>({ toggleSidebar: () => {}, collapsed: false });
 export const useShell = () => useContext(Ctx);
 
 export default function Shell({ children }: { children: React.ReactNode }) {
@@ -23,7 +24,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   }, [loadKbs, loadProjects]);
 
   return (
-    <Ctx.Provider value={{ toggleSidebar: () => setCollapsed((c) => !c) }}>
+    <Ctx.Provider value={{ toggleSidebar: () => setCollapsed((c) => !c), collapsed }}>
       <div className={`shell${collapsed ? " collapsed" : ""}`}>
         <Sidebar onNavigate={() => window.innerWidth < 820 && setCollapsed(true)} />
         <div className="main">{children}</div>
