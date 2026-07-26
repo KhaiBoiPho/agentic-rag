@@ -233,12 +233,32 @@ async def _compute_cost(args: dict) -> dict:
     web_sources: list[dict] = []  # [{index, title, url}] — cited as [n] in the output text
 
     async def price_line(
-        label: str, name_query: str, qty: float, unit: str, target_desc: str
+        label: str,
+        name_query: str,
+        qty: float,
+        unit: str,
+        target_desc: str,
+        exclude_keywords: list[str] | None = None,
     ) -> dict:
         """Pure — returns a line dict, no shared-state mutation, so the four
         calls can run concurrently (see asyncio.gather below). web_sources
-        indices/citation numbers are assigned afterwards in fixed order."""
-        candidates = await repo.lookup(region=region, material_name=name_query, unit=unit, limit=15)
+        indices/citation numbers are assigned afterwards in fixed order.
+
+        `exclude_keywords` filters at the SQL level, before `limit` caps the
+        candidate list — without this, a generic name_query like "thép" (75+
+        rows in HN) can have every one of the top-15-by-recency slots taken
+        by exactly the variants target_desc says to exclude (ống thép, thép
+        mạ kẽm...), pushing the actually-correct rebar/coil rows out of the
+        window the LLM disambiguator ever sees. Relying on the disambiguator
+        alone to filter post-hoc doesn't help once the right row never made
+        the cut."""
+        candidates = await repo.lookup(
+            region=region,
+            material_name=name_query,
+            unit=unit,
+            exclude_name_keywords=exclude_keywords,
+            limit=15,
+        )
         idx = await _disambiguate(llm, target_desc, candidates)
         if idx is not None:
             unit_price = float(candidates[idx].price_ex_vat)
@@ -303,6 +323,7 @@ async def _compute_cost(args: dict) -> dict:
             "kg",
             "thép thanh/thép cây/thép cuộn dùng làm cốt thép bê tông (thép xây dựng) — "
             "KHÔNG phải ống thép, tôn thép, thép mạ kẽm, khung móng thép đúc sẵn",
+            exclude_keywords=["ống thép", "mạ kẽm", "tôn thép", "thép mạ", "dày mạ"],
         ),
         price_line(
             "gạch xây",
