@@ -18,7 +18,7 @@ private networking):
 | `rabbitmq` | Docker image `rabbitmq:3.13-management-alpine` | Attach a volume at `/var/lib/rabbitmq`. Alternative: [CloudAMQP](https://www.cloudamqp.com) free tier — skip self-hosting entirely. |
 | `backend` | This repo, root directory `.` (uses the root `Dockerfile`) | FastAPI. |
 | `migrate` | Same image as `backend`, but run as a **one-off command**, not a persistent service — see below. |
-| `frontend` | This repo, root directory `frontend` (uses `frontend/Dockerfile`) | Next.js UI. |
+| `frontend` | This repo, root directory `web` (uses `web/Dockerfile`) | Next.js UI ("Cốt"). The old `frontend/` directory is unused — do not point a service at it. |
 
 Railway gives every service in a project a private hostname
 `<service-name>.railway.internal`, reachable from other services in the same
@@ -108,7 +108,7 @@ automatic pre-deploy hook on Railway without a paid add-on/custom script).
 
 ## 6. Frontend (`ui`)
 
-New service from this GitHub repo, **root directory `frontend`**. Environment
+New service from this GitHub repo, **root directory `web`**. Environment
 variables:
 
 ```
@@ -119,8 +119,17 @@ This is read both at build time and at runtime by `next.config.mjs`'s
 `rewrites()` — Railway sets it as a build arg automatically if declared as a
 service variable before the first deploy.
 
-The frontend already listens on Railway's `$PORT` (see
-`frontend/package.json`'s `start` script) — no further changes needed.
+The frontend already listens on Railway's `$PORT` (see `web/package.json`'s
+`start` script, `next start -p ${PORT:-3210}`) — no further changes needed.
+
+> **Migrating an existing service that was created against `frontend`:**
+> Railway's root directory is a per-service setting, not something this repo
+> controls — changing `docker-compose.yml` or anything else in-repo has no
+> effect on it. Go to the service → **Settings → Source → Root Directory**,
+> change `frontend` to `web`, then trigger a redeploy (or push a commit).
+> Confirm the fix worked by checking the deploy log's startup banner — it
+> should read `agentic-rag-frontend@... / Next.js 14.2.35` (old, wrong) vs.
+> `cot-web@1.0.0 / Next.js 15.x` (new, correct).
 
 After deploy, Railway assigns a public domain
 (`<name>.up.railway.app`) — that's the URL to open, and the one to put back
@@ -135,3 +144,26 @@ into the backend's `CORS_ORIGINS`.
 - [ ] Qdrant and RabbitMQ each have a persistent volume attached (otherwise data disappears on every redeploy)
 - [ ] `OPENROUTER_API_KEY` / `FIRECRAWL_API_KEY` set on the backend service
 - [ ] SSE still streams (not buffered) — Railway's edge proxy passes through `Cache-Control: no-transform`/chunked responses fine, but verify after first deploy by watching a `/api/v1/chat/stream` response arrive token-by-token rather than all at once
+
+## Troubleshooting
+
+**Frontend deploy log shows an old Next.js version / `agentic-rag-frontend` as
+the package name:** the service's root directory is still `frontend` — see
+the migration note in §6.
+
+**`Failed to proxy http://<backend>.railway.internal:PORT/...` /
+`ECONNREFUSED` in the frontend logs:** the frontend container itself is fine
+(it's just relaying); the backend service isn't reachable at that address.
+Check, in order:
+1. Is the backend service actually **running** (not crash-looped)? Open its
+   own deploy logs — a crash on `WHISPER_DEVICE=cuda` with no GPU, a missing
+   `DATABASE_URL`, or a failed migration are the usual causes.
+2. Does `API_PROXY_TARGET` on the frontend match the backend's **actual**
+   Railway service name? It's always `<service-name>.railway.internal` —
+   if you named the backend service `agentic-rag` instead of `backend`, the
+   variable must read `http://agentic-rag.railway.internal:${{PORT}}`, not
+   `http://backend.railway.internal:...`.
+3. Is the backend bound to Railway's injected `$PORT` (`APP_PORT=${{PORT}}`
+   per §4), not a hardcoded `8000`? A frontend variable hardcoded to `:8000`
+   will break the moment Railway assigns the backend a different internal
+   port.
