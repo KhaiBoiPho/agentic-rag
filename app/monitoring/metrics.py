@@ -17,19 +17,6 @@ HTTP_REQUEST_LATENCY = Histogram(
     buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
 )
 
-# ─── gRPC ────────────────────────────────────────────────────────────────────
-GRPC_REQUEST_COUNT = Counter(
-    "grpc_requests_total",
-    "Total gRPC requests",
-    ["method", "status"],
-)
-GRPC_REQUEST_LATENCY = Histogram(
-    "grpc_request_duration_seconds",
-    "gRPC request latency",
-    ["method"],
-    buckets=[0.01, 0.1, 0.5, 1.0, 5.0, 30.0],
-)
-
 # ─── LLM ─────────────────────────────────────────────────────────────────────
 LLM_REQUEST_LATENCY = Histogram(
     "llm_request_duration_seconds",
@@ -59,12 +46,6 @@ QUEUE_DEPTH = Gauge(
     "rabbitmq_queue_depth",
     "Estimated RabbitMQ queue depth",
     ["queue"],
-)
-
-# ─── Active connections ───────────────────────────────────────────────────────
-ACTIVE_GRPC_STREAMS = Gauge(
-    "active_grpc_streams",
-    "Currently active gRPC streams",
 )
 
 

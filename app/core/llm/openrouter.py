@@ -2,8 +2,8 @@
 
 OpenRouter is OpenAI-API compatible, so we use the openai SDK pointed at
 the OpenRouter base URL. HTTP chunks from /chat/completions SSE are
-re-yielded as async generator tokens — the gRPC servicer then wraps those
-into gRPC server-stream messages.
+re-yielded as async generator tokens for the caller to forward over its
+own SSE response.
 """
 
 from __future__ import annotations

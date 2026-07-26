@@ -42,7 +42,7 @@ class ResearchState(TypedDict):
     final_response: str
     sources: list[dict]  # {url, title, snippet}
 
-    # Streaming events for gRPC/SSE — plain {node, status, content, progress,
+    # Streaming events for SSE — plain {node, status, content, progress,
     # iteration} dicts, not chat messages. `add_messages` (LangGraph's usual
     # reducer for a Annotated[list, ...] field) is specifically for
     # role/content chat messages and raises ValueError on anything else

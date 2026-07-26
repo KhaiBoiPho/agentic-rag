@@ -1,4 +1,4 @@
-"""Application entry point — starts FastAPI (HTTP) + gRPC concurrently."""
+"""Application entry point — starts the FastAPI (HTTP/SSE) app."""
 
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ from app.config import settings
 from app.core.bootstrap.seed import seed_system_kb_documents
 from app.db.postgres.base import init_db
 from app.db.qdrant.client import QdrantStore
-from app.grpc_server.server import serve as grpc_serve
 from app.monitoring.metrics import init_metrics
 from app.monitoring.middleware import PrometheusMiddleware
 from app.queue.consumer import start_consumer
@@ -43,7 +42,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Agentic RAG",
         version="0.1.0",
-        description="Monolithic RAG service with gRPC streaming, deep research, voice & MCP",
+        description="Monolithic RAG service with deep research, voice & MCP",
         docs_url="/docs" if settings.app_debug else None,
         redoc_url="/redoc" if settings.app_debug else None,
     )
@@ -130,14 +129,6 @@ def create_app() -> FastAPI:
         else:
             logger.info(f"STT_BACKEND={settings.stt_backend} — skipping local Whisper model load")
 
-        # gRPC server
-        async def _start_grpc_safe():
-            try:
-                await grpc_serve(settings.grpc_host, settings.grpc_port)
-            except Exception as exc:
-                logger.warning(f"gRPC server error: {exc}")
-
-        asyncio.create_task(_start_grpc_safe())
         logger.info("startup complete")
 
     @app.on_event("shutdown")

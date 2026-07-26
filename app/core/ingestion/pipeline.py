@@ -1,6 +1,7 @@
 """Document ingestion pipeline — parse → chunk → embed → store.
 
-Yields progress events so gRPC servicer can stream them back to the client.
+Yields progress events so the caller (upload endpoint, background seeding)
+can stream/report them back.
 """
 
 from __future__ import annotations

@@ -17,10 +17,6 @@ build/
 .coverage
 htmlcov/
 
-# gRPC stubs are generated (scripts/gen_protos.sh) — never commit output
-app/grpc_server/generated/*_pb2*.py
-!app/grpc_server/generated/__init__.py
-
 # ─── Frontend (Node/Next.js) ─────────────────────────────────────────────────
 frontend/node_modules/
 frontend/.next/

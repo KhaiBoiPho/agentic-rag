@@ -16,7 +16,7 @@ run multi-step "deep research", estimate construction costs from a structured pr
 database, and talk by voice.
 
 **Backend stack (already built, do not change):**
-- FastAPI (REST + SSE) on port **8000**, gRPC on **50051** (frontend uses REST only).
+- FastAPI (REST + SSE) on port **8000**.
 - PostgreSQL (users, KBs, documents, conversations, messages, material_prices, notes, projects, usage).
 - Qdrant (vector store for RAG chunks).
 - RabbitMQ (async document-ingestion queue).

@@ -16,7 +16,7 @@ private networking):
 | `postgres` | Railway's built-in **Postgres plugin** | Don't self-host via the `postgres:16-alpine` image — use the managed plugin, it gives you `DATABASE_URL` automatically. |
 | `qdrant` | Docker image `qdrant/qdrant:v1.12.4` | Deploy as an empty Railway service pointed at this public image. Attach a volume at `/qdrant/storage` (Settings → Volumes) or data is lost on redeploy. Alternative: [Qdrant Cloud](https://cloud.qdrant.io) free tier — skip self-hosting entirely. |
 | `rabbitmq` | Docker image `rabbitmq:3.13-management-alpine` | Attach a volume at `/var/lib/rabbitmq`. Alternative: [CloudAMQP](https://www.cloudamqp.com) free tier — skip self-hosting entirely. |
-| `backend` | This repo, root directory `.` (uses the root `Dockerfile`) | FastAPI + gRPC. |
+| `backend` | This repo, root directory `.` (uses the root `Dockerfile`) | FastAPI. |
 | `migrate` | Same image as `backend`, but run as a **one-off command**, not a persistent service — see below. |
 | `frontend` | This repo, root directory `frontend` (uses `frontend/Dockerfile`) | Next.js UI. |
 
@@ -91,9 +91,6 @@ CORS_ORIGINS=["https://<your-frontend>.up.railway.app"]
 image per deploy, there's no host filesystem to bind to, and doing so would
 just be a no-op / misconfiguration to remove if you ever copy compose env
 settings over by hand).
-
-The gRPC port (50051) doesn't need to be exposed — the frontend talks to the
-backend over REST only.
 
 ## 5. Migrations
 

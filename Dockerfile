@@ -17,14 +17,9 @@ RUN pip install --no-cache-dir -e .
 # ignore this, the libs just sit unused.
 ENV LD_LIBRARY_PATH="/usr/local/lib/python3.11/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib:${LD_LIBRARY_PATH}"
 
-# Compile proto files
-COPY scripts/gen_protos.sh scripts/gen_protos.sh
-COPY protos/ protos/
-RUN chmod +x scripts/gen_protos.sh && bash scripts/gen_protos.sh
-
 # Copy application source
 COPY . .
 
-EXPOSE 8000 50051
+EXPOSE 8000
 
 CMD ["python", "-m", "app.main"]

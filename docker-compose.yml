@@ -49,7 +49,6 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
-      - "50051:50051"
     environment:
       APP_ENV: development
       APP_DEBUG: "true"

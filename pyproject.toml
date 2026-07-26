@@ -5,19 +5,13 @@ build-backend = "hatchling.build"
 [project]
 name = "agentic-rag"
 version = "0.1.0"
-description = "Agentic RAG — monolithic service with gRPC streaming, deep research, voice, MCP"
+description = "Agentic RAG — monolithic service with deep research, voice, MCP"
 requires-python = ">=3.11"
 dependencies = [
     # Web framework
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
     "python-multipart>=0.0.12",
-
-    # gRPC
-    "grpcio>=1.68.0",
-    "grpcio-tools>=1.68.0",
-    "grpcio-reflection>=1.68.0",
-    "protobuf>=5.28.0",
 
     # Database — PostgreSQL
     "sqlalchemy[asyncio]>=2.0.36",

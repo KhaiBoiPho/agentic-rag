@@ -1,6 +1,6 @@
 # Agentic RAG
 
-A monolithic AI backend for a Vietnamese construction-materials domain assistant, combining **RAG**, **deterministic tool-calling for cost estimation**, **local voice I/O (GPU-capable)**, and an **MCP server** — exposed via FastAPI (HTTP/SSE) and gRPC streaming, with a Next.js chat frontend.
+A monolithic AI backend for a Vietnamese construction-materials domain assistant, combining **RAG**, **deterministic tool-calling for cost estimation**, **local voice I/O (GPU-capable)**, and an **MCP server** — exposed via FastAPI (HTTP/SSE), with a Next.js chat frontend.
 
 ---
 
@@ -14,7 +14,7 @@ A monolithic AI backend for a Vietnamese construction-materials domain assistant
 
 | Layer | Technology | Why |
 |---|---|---|
-| **API** | FastAPI (HTTP + SSE) + gRPC (bi-directional streaming) | SSE for the chat UI's token stream; gRPC stubs exist for non-browser clients |
+| **API** | FastAPI (HTTP + SSE) | SSE for the chat UI's token stream |
 | **LLM / embeddings / vision / TTS** | OpenRouter (OpenAI-compatible), model per task set independently in `.env` | One API key, swappable models per task without code changes |
 | **Vector store** | Qdrant | Named-vector collection, batched upsert (200 pts/request — large PDFs otherwise hit `WriteTimeout`) |
 | **Relational store** | PostgreSQL 16 + SQLAlchemy (async, `asyncpg`) + Alembic | Users, KBs, documents, and **structured** material-price rows (`material_prices` table) — exact lookups, not vector search |
@@ -285,7 +285,7 @@ Dashboard is auto-provisioned from `grafana/dashboards/agentic_rag.json`.
 ```
 agentic-rag/
 ├── app/
-│   ├── main.py              # FastAPI app factory + startup (Qdrant connect, system-KB seed, Whisper load, gRPC)
+│   ├── main.py              # FastAPI app factory + startup (Qdrant connect, system-KB seed, Whisper load)
 │   ├── config.py            # Settings (reads .env)
 │   ├── api/v1/               # REST endpoints (auth, chat, documents, knowledge_base, search, research, voice, config)
 │   ├── core/
@@ -303,14 +303,12 @@ agentic-rag/
 │   ├── db/
 │   │   ├── postgres/        # SQLAlchemy models + repos (incl. material_prices)
 │   │   └── qdrant/          # Vector store client
-│   ├── grpc_server/         # gRPC servicers + generated stubs
 │   ├── queue/               # RabbitMQ publisher + consumer
 │   └── monitoring/          # Prometheus metrics + middleware
 ├── frontend/                # Next.js 16 (App Router) + React 19 — single chat surface, see §5
 ├── seed_data/                # Committed source files for the 2 system KBs (§3)
 ├── backups/                  # gitignored — local Postgres/Qdrant volume dumps (§9)
-├── scripts/                  # gen_protos.sh, setup.sh, one-off ingestion/dedup scripts used during development
-├── protos/                  # .proto definitions
+├── scripts/                  # setup.sh, one-off ingestion/dedup scripts used during development
 ├── migrations/               # Alembic migrations
 ├── grafana/                 # Prometheus config + dashboards
 ├── docker-compose.yml

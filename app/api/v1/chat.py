@@ -1,4 +1,4 @@
-"""Chat REST endpoint — SSE fallback (gRPC preferred for production)."""
+"""Chat REST endpoint — SSE streaming."""
 
 from __future__ import annotations
 
@@ -80,7 +80,7 @@ class ChatRequest(BaseModel):
 
 @router.post("/stream")
 async def stream_chat(body: ChatRequest, current_user: CurrentUser):
-    """SSE stream — use gRPC endpoint for lower latency in production."""
+    """SSE stream for the chat UI's token stream."""
     llm = OpenRouterClient()
     retriever = Retriever()
     from app.db.postgres.repositories.message_repo import MessageRepository
@@ -272,13 +272,56 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
         if body.mode == "agent":
             from app.core.llm.tool_loop import run_tool_loop
 
+            # Same history-as-memory pattern as the plain RAG path below —
+            # without this, every agent-mode turn (which is every turn, the
+            # frontend always sends mode="agent") starts from zero context,
+            # so a follow-up like "ở HCM thì sao" after "giá xây 100m2 ở Hà
+            # Nội" has no idea what area/finish_level it's even talking
+            # about and can't call the cost tool with inferred parameters.
+            agent_history: list[dict] = []
+            if body.conversation_id:
+                try:
+                    agent_history = await msg_repo.get_recent(body.conversation_id, limit=10)
+                except Exception:
+                    agent_history = []
+
             messages = [
                 {"role": "system", "content": system_prompt},
+                *agent_history,
                 {"role": "user", "content": body.message},
             ]
+            t0 = time.perf_counter()
             final_content, tool_call_log = await run_tool_loop(messages, llm=llm, model=body.model)
             yield _sse({"type": "text", "delta": final_content, "done": False})
             yield _sse({"type": "text", "delta": "", "done": True, "sources": tool_call_log})
+
+            if body.conversation_id:
+                try:
+                    await msg_repo.ensure_conversation(
+                        body.conversation_id,
+                        str(current_user.id),
+                        kb_id=body.kb_id,
+                        title=body.message[:512],
+                    )
+                    await msg_repo.add(body.conversation_id, "user", body.message)
+                    await msg_repo.add(body.conversation_id, "assistant", final_content)
+                except Exception:
+                    pass
+
+            try:
+                model_used = body.model or "openai/gpt-4o-mini"
+                prompt_tokens = count_tokens(system_prompt) + count_tokens(body.message)
+                completion_tokens = count_tokens(final_content)
+                await UsageRepository().record(
+                    user_id=str(current_user.id),
+                    model=model_used,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    cost_usd=estimate_cost_usd(model_used, prompt_tokens, completion_tokens),
+                    duration_ms=int((time.perf_counter() - t0) * 1000),
+                )
+            except Exception:
+                pass
             return
 
         search_kb_id: str | list[str] | None = body.kb_id

@@ -25,10 +25,6 @@ class Settings(BaseSettings):
     app_debug: bool = False
     secret_key: str = "change-me"
 
-    # ─── gRPC ────────────────────────────────────────────────────────────────
-    grpc_host: str = "0.0.0.0"
-    grpc_port: int = 50051
-
     # ─── PostgreSQL ──────────────────────────────────────────────────────────
     database_url: str = "postgresql+asyncpg://agentic:agentic_secret@localhost:5432/agentic_rag"
 

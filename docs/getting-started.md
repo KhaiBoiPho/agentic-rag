@@ -12,7 +12,7 @@ tính năng chính hoạt động đúng.
 - `openssl` (để `scripts/setup.sh` sinh secret ngẫu nhiên)
 - 1 API key OpenRouter ([openrouter.ai/keys](https://openrouter.ai/keys)) — bắt buộc, dùng cho chat, embedding, OCR fallback (file scan) và TTS
 - Ổ đĩa trống ≥ 500MB cho `seed_data/` (kiến thức xây dựng + giá vật liệu 3 vùng HN/DN/HCM)
-- (Tuỳ chọn) GPU NVIDIA nếu muốn chạy Whisper `medium`/`large` cho STT nhanh hơn — xem mục 9
+- (Tuỳ chọn) GPU NVIDIA nếu muốn chạy Whisper `medium`/`large` cho STT nhanh hơn — xem mục 8
 
 ---
 
@@ -24,7 +24,7 @@ cd agentic-rag
 bash scripts/setup.sh
 ```
 
-`setup.sh` tự copy `.env.example` → `.env` và sinh `SECRET_KEY`/`JWT_SECRET_KEY` ngẫu nhiên. Sau đó **mở `.env`, điền `OPENROUTER_API_KEY`** (bắt buộc — thiếu key này thì chat và toàn bộ việc ingest dữ liệu có sẵn sẽ không chạy được, xem mục 6).
+`setup.sh` tự copy `.env.example` → `.env` và sinh `SECRET_KEY`/`JWT_SECRET_KEY` ngẫu nhiên. Sau đó **mở `.env`, điền `OPENROUTER_API_KEY`** (bắt buộc — thiếu key này thì chat và toàn bộ việc ingest dữ liệu có sẵn sẽ không chạy được, xem mục 5).
 
 Các model mặc định trong `.env.example`:
 ```
@@ -38,26 +38,7 @@ OpenRouter thỉnh thoảng gỡ/đổi tên model (kể cả model trả phí, 
 
 ---
 
-## 3. ⚠️ Bước bắt buộc trước lần `up` đầu tiên: sinh gRPC stub
-
-Thư mục `app/grpc_server/generated/*_pb2*.py` **bị gitignore** (là code sinh tự động từ `protos/`, không commit). `Dockerfile` có tự sinh lúc build image, **nhưng** `docker-compose.yml` mount `.:/app` (live-reload dev) — bind mount này sẽ **che mất** các file đã sinh trong image bằng thư mục rỗng trên máy host, gây lỗi:
-
-```
-ImportError: cannot import name 'chat_pb2' from 'app.grpc_server.generated'
-```
-
-Sinh trước 1 lần trên host (không cần cài `grpc_tools` local, dùng luôn image vừa build):
-
-```bash
-docker compose build app
-docker run --rm -v "$(pwd):/app" -w /app agentic-rag-app bash scripts/gen_protos.sh
-```
-
-Chỉ cần làm 1 lần — sau đó `app/grpc_server/generated/*.py` tồn tại sẵn trên host, mọi lần `docker compose up`/`restart` sau đều dùng lại được (kể cả khi container bị xoá/tạo lại), trừ khi bạn `git clean` xoá sạch untracked files.
-
----
-
-## 4. Chạy toàn bộ hệ thống
+## 3. Chạy toàn bộ hệ thống
 
 ```bash
 docker compose up -d --build
@@ -78,7 +59,7 @@ curl http://localhost:8000/health
 # {"status":"ok"}
 ```
 
-**Docker Desktop vs Docker Engine gốc**: nếu máy có cả hai (`docker context ls` thấy `desktop-linux` và `default`), Docker Desktop chạy engine riêng trong VM, **không có GPU passthrough** dù host đã cài `nvidia-container-toolkit` — nếu định dùng GPU cho Whisper (mục 9), phải `docker context use default` trước khi `docker compose up`.
+**Docker Desktop vs Docker Engine gốc**: nếu máy có cả hai (`docker context ls` thấy `desktop-linux` và `default`), Docker Desktop chạy engine riêng trong VM, **không có GPU passthrough** dù host đã cài `nvidia-container-toolkit` — nếu định dùng GPU cho Whisper (mục 8), phải `docker context use default` trước khi `docker compose up`.
 
 **Muốn xem container/log trực quan** (thay vì gõ lệnh): cài [lazydocker](https://github.com/jesseduffield/lazydocker) (không cần sudo, 1 binary):
 ```bash
@@ -87,13 +68,13 @@ curl https://raw.githubusercontent.com/jesseduffield/lazydocker/master/scripts/i
 
 ---
 
-## 5. Log không hiện realtime?
+## 4. Log không hiện realtime?
 
 Nếu `docker compose logs app` không in gì dù container đã chạy được vài chục giây (nhưng `curl localhost:8000/health` vẫn trả `ok` bình thường) — đây là do Python buffer stdout khi không gắn TTY. `docker-compose.yml`'s `app` service đã có sẵn `PYTHONUNBUFFERED: "1"` để tránh việc này; nếu bạn thấy lại hiện tượng này sau khi tự sửa compose file, kiểm tra biến đó còn tồn tại không.
 
 ---
 
-## 6. Dữ liệu có sẵn (seed) — tự động, chạy ngầm
+## 5. Dữ liệu có sẵn (seed) — tự động, chạy ngầm
 
 Ngay khi container `app` khởi động lần đầu, nó tự ingest **2 knowledge base hệ thống** từ `seed_data/` (đã commit sẵn trong repo, không cần upload tay):
 
@@ -126,9 +107,9 @@ Nếu thiếu `OPENROUTER_API_KEY` hoặc key sai, bước này sẽ log lỗi (
 
 ---
 
-## 7. Test end-to-end
+## 6. Test end-to-end
 
-### 7.1. Tạo tài khoản + đăng nhập
+### 6.1. Tạo tài khoản + đăng nhập
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/auth/register \
@@ -137,11 +118,11 @@ curl -X POST http://localhost:8000/api/v1/auth/register \
 ```
 Lấy `access_token` trong response, hoặc đăng nhập trực tiếp trên UI tại http://localhost:3210.
 
-### 7.2. Test RAG chat với KB kiến thức
+### 6.2. Test RAG chat với KB kiến thức
 
 Trên UI: chọn KB **"Kiến thức xây dựng"**, hỏi ví dụ *"Quy tắc không cộng trùng hao hụt là gì?"* — câu trả lời phải trích đúng nội dung, kèm citation chip trỏ vào `DataRAG-uoc-luong-gia-vlxd.md`.
 
-### 7.3. Test human-in-the-loop form tính giá xây dựng
+### 6.3. Test human-in-the-loop form tính giá xây dựng
 
 Gõ câu có chứa cả 3 nhóm từ khoá "nhà" + "xây/xây dựng" + "giá/chi phí/bao nhiêu tiền" (xem `app/core/chat/intent.py`), ví dụ:
 
@@ -166,7 +147,7 @@ curl -s -X POST http://localhost:8000/api/v1/chat/stream \
 
 **Lưu ý về dữ liệu theo vùng**: bộ `seed_data/` hiện có độ chi tiết khác nhau theo vùng — Đà Nẵng có đủ giá cho cả 4 hạng mục (bê tông/thép/gạch/sơn) nên ra tổng chi phí; Hà Nội và TPHCM thiếu giá bê tông tươi/thép cây trong nguồn đã ingest nên trả về **"không đủ dữ liệu"** cho đúng hạng mục đó thay vì đoán số — đây là hành vi đúng (mục 56 của playbook: không đưa 1 số khi thiếu dữ liệu), không phải lỗi.
 
-### 7.4. Test tool-calling tự do (`mode="agent"`)
+### 6.4. Test tool-calling tự do (`mode="agent"`)
 
 ```bash
 curl -s -X POST http://localhost:8000/api/v1/chat/stream \
@@ -175,7 +156,7 @@ curl -s -X POST http://localhost:8000/api/v1/chat/stream \
 ```
 LLM phải tự gọi tool `lookup_material_price` (xem trong `sources` của response là `tool_call_log`, không phải citation chunk).
 
-### 7.5. Test upload tay 1 file mới (KB do user tự tạo)
+### 6.5. Test upload tay 1 file mới (KB do user tự tạo)
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/kb \
@@ -186,17 +167,16 @@ curl -X POST "http://localhost:8000/api/v1/documents/upload/<kb_id>" \
   -H "Authorization: Bearer $TOKEN" -F "file=@/path/to/file.pdf"
 ```
 
-### 7.6. Test voice (Speak → nghe trả lời)
+### 6.6. Test voice (Speak → nghe trả lời)
 
 Trên UI, bấm nút **Speak** (mic) trong composer, nói, bấm dừng — hệ thống tự gửi transcript vào chat, chờ trả lời, rồi tự phát giọng đọc kèm chỉ báo "🔊 Speaking…" cạnh nút mic. Lưu ý: giọng đọc **không đảm bảo khớp nguyên văn** với chữ hiển thị (xem README §2.3) — đây là giới hạn của model audio OpenRouter đang dùng, không phải lỗi.
 
 ---
 
-## 8. Sự cố thường gặp
+## 7. Sự cố thường gặp
 
 | Triệu chứng | Nguyên nhân | Cách sửa |
 |---|---|---|
-| `ImportError: cannot import name 'chat_pb2'` | Chưa sinh gRPC stub trên host (mục 3) | `docker run --rm -v "$(pwd):/app" -w /app agentic-rag-app bash scripts/gen_protos.sh` rồi `docker compose up -d --force-recreate app` |
 | UI báo lỗi 500 khi gọi `/api/v1/...` qua `localhost:3210` | Container `ui` build từ code cũ (Next.js image không tự reload như `app`) | `docker compose up -d --build ui` |
 | Login/API trả `Internal Server Error` không phải JSON | `app` container chưa khởi động xong (mới restart) | Đợi vài giây, kiểm `docker compose logs app | tail -20` thấy `Application startup complete` |
 | Chat/OCR/TTS báo lỗi model không tồn tại (404) | Model trong `.env` đã bị OpenRouter gỡ hoặc đổi tên | Đổi `OPENROUTER_*_MODEL` trong `.env` sang model còn tồn tại (kiểm tại openrouter.ai/models), `docker compose up -d --force-recreate --no-deps app` (`.env` không tự áp dụng qua `restart` thường) |
@@ -207,13 +187,13 @@ Trên UI, bấm nút **Speak** (mic) trong composer, nói, bấm dừng — hệ
 
 ---
 
-## 9. GPU cho Whisper (tuỳ chọn)
+## 8. GPU cho Whisper (tuỳ chọn)
 
 Xem chi tiết tại [README.md §8](../README.md#8-gpu-optional--local-whisper-stt) — tóm tắt: CPU dùng được ngay, không cần cấu hình gì; muốn dùng GPU cho model `medium`/`large` thì cần `nvidia-container-toolkit` trên host + chạy đúng Docker Engine gốc (không phải Docker Desktop VM) + đổi 3 biến `WHISPER_*` trong `.env`.
 
 ---
 
-## 10. Tài liệu liên quan
+## 9. Tài liệu liên quan
 
 - [docs/construction-pricing-pipeline.md](construction-pricing-pipeline.md) — chi tiết pipeline chunking/embedding/price-extraction/tool-calling/human-in-loop form.
 - [README.md](../README.md) — kiến trúc tổng quan, tech stack, luồng hệ thống, Makefile, API reference.
