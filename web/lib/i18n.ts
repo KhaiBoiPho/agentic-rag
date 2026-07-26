@@ -99,6 +99,8 @@ const vi = {
     finishHigh: "Hoàn thiện cao cấp",
     submit: "Tính dự toán",
     hint: "Tính bằng công thức cố định — không phải LLM",
+    submitted: "Đã gửi",
+    submittedHint: "Không thể sửa sau khi đã tính — trả lời ở bên dưới",
   },
   research: {
     start: "Bắt đầu",
@@ -332,6 +334,8 @@ const en = {
     finishHigh: "Premium finish",
     submit: "Calculate estimate",
     hint: "Computed with a fixed formula — not the LLM",
+    submitted: "Submitted",
+    submittedHint: "Can't be edited after calculating — see the reply below",
   },
   research: {
     start: "Starting",

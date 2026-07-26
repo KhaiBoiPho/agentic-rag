@@ -193,6 +193,14 @@
 .fb{padding:var(--sp-4);display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-3) var(--sp-4);}
 .ff{display:flex;align-items:center;gap:12px;padding:0 var(--sp-4) var(--sp-4);flex-wrap:wrap;}
 .ff .hint{margin-left:auto;font-family:var(--f-mono);font-size:10px;color:var(--faint);}
+
+/* submitted (locked) state — form stays visible instead of vanishing */
+.form-card.submitted .fh{background:var(--good-soft);border-bottom-style:solid;border-bottom-color:var(--good-line);}
+.form-card.submitted .fh .tg{color:var(--good);border-color:var(--good-line);}
+.fb .control[aria-readonly]{background:var(--surface-2);color:var(--ink-soft);cursor:default;}
+.form-submitted-tag{display:inline-flex;align-items:center;gap:6px;font-family:var(--f-mono);font-size:var(--fs-xs);
+  color:var(--good);background:var(--good-soft);border:1px solid var(--good-line);border-radius:100px;padding:5px 12px;flex:none;}
+
 .control.select-wrap{padding:0;}
 select.control{appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
   background-position:calc(100% - 16px) 55%,calc(100% - 11px) 55%;background-size:5px 5px;background-repeat:no-repeat;padding-right:32px;}

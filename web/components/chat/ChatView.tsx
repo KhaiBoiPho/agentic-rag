@@ -319,7 +319,9 @@ export default function ChatView({ conversationId }: { conversationId: string })
       if (busyRef.current) return;
       busyRef.current = true;
       setBusy(true);
-      setMessages((m) => m.map((x) => (x.pendingForm ? { ...x, pendingForm: undefined } : x)));
+      // keep the form visible but locked, showing what was submitted —
+      // rather than blanking the bubble out to an empty husk
+      setMessages((m) => m.map((x) => (x.pendingForm && !x.formSubmittedData ? { ...x, formSubmittedData: data } : x)));
       try {
         await streamChat({ formSubmission: { form_id: formId, data } });
       } finally {

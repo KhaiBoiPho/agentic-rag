@@ -141,6 +141,7 @@ export interface ChatMessage {
   ragContext?: RagContext | null;
   webMode?: "search" | "research";
   pendingForm?: PendingForm;
+  formSubmittedData?: Record<string, unknown>;
   researchSteps?: ResearchStep[];
   researchProgress?: number;
   viaVoice?: boolean;

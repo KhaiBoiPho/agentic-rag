@@ -71,7 +71,12 @@ function MessageBubbleImpl({ msg, onSubmitForm, onTogglePin, onDelete }: Props) 
           )}
 
           {msg.pendingForm && (
-            <CostForm form={msg.pendingForm} disabled={msg.streaming} onSubmit={onSubmitForm} />
+            <CostForm
+              form={msg.pendingForm}
+              submittedData={msg.formSubmittedData}
+              disabled={msg.streaming}
+              onSubmit={onSubmitForm}
+            />
           )}
 
           {msg.error && (
@@ -171,7 +176,9 @@ function Badges({ msg, hasRag }: { msg: ChatMessage; hasRag: boolean }) {
         <Globe /> {t.chat.badgeResearch}
       </span>
     );
-  } else if (!msg.streaming) {
+  } else if (!msg.streaming && !(msg.pendingForm && !msg.content)) {
+    // a bare form-request bubble (no answer text yet) isn't "plain chat" —
+    // showing that badge over an interactive form reads as a stray answer
     badge = <span className="badge plain">{t.chat.badgePlain}</span>;
   }
 

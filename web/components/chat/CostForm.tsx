@@ -3,14 +3,16 @@
 import { useState } from "react";
 import { useT } from "@/lib/i18n";
 import type { FormField, PendingForm } from "@/lib/types";
-import { Sheet } from "../Icons";
+import { Check, Sheet } from "../Icons";
 
 export default function CostForm({
   form,
+  submittedData,
   disabled,
   onSubmit,
 }: {
   form: PendingForm;
+  submittedData?: Record<string, unknown>;
   disabled?: boolean;
   onSubmit: (formId: string, data: Record<string, unknown>) => void;
 }) {
@@ -71,8 +73,22 @@ export default function CostForm({
     onSubmit(form.form_id, data);
   }
 
+  // Once submitted, the form locks in place showing what was sent — instead
+  // of vanishing (which left an empty husk of a message bubble behind) or
+  // staying editable (which allowed accidental re-submission).
+  const submitted = !!submittedData;
+
+  function displayValue(f: FormField): string {
+    const raw = submittedData?.[f.name];
+    if (raw === undefined || raw === null || raw === "") return "—";
+    if (f.type === "select") {
+      return f.options?.find((o) => o.value === String(raw))?.label ?? String(raw);
+    }
+    return String(raw);
+  }
+
   return (
-    <form className="form-card" onSubmit={submit}>
+    <form className={`form-card${submitted ? " submitted" : ""}`} onSubmit={submit}>
       <div className="fh">
         <span className="tg">Form</span>
         <h4>{form.title || t.costForm.title}</h4>
@@ -82,9 +98,13 @@ export default function CostForm({
         {fields.map((f) => (
           <div className="field" key={f.name}>
             <label>
-              {f.label} {f.required && <span className="req">*</span>}
+              {f.label} {f.required && !submitted && <span className="req">*</span>}
             </label>
-            {f.type === "select" ? (
+            {submitted ? (
+              <div className="control" aria-readonly="true">
+                {displayValue(f)}
+              </div>
+            ) : f.type === "select" ? (
               <select
                 className="control"
                 value={values[f.name]}
@@ -113,10 +133,16 @@ export default function CostForm({
         ))}
       </div>
       <div className="ff">
-        <button className="btn btn-primary" type="submit" disabled={disabled}>
-          <Sheet /> {t.costForm.submit}
-        </button>
-        <span className="hint">{t.costForm.hint}</span>
+        {submitted ? (
+          <span className="form-submitted-tag">
+            <Check width={13} height={13} /> {t.costForm.submitted}
+          </span>
+        ) : (
+          <button className="btn btn-primary" type="submit" disabled={disabled}>
+            <Sheet /> {t.costForm.submit}
+          </button>
+        )}
+        <span className="hint">{submitted ? t.costForm.submittedHint : t.costForm.hint}</span>
       </div>
     </form>
   );
