@@ -20,7 +20,7 @@ export default function KbListPage() {
     setCreating(true);
     setError(null);
     try {
-      await api.post<KBResponse>('/api/v1/kb/', { name: name.trim(), description: description.trim() || undefined });
+      await api.post<KBResponse>('/api/v1/kb', { name: name.trim(), description: description.trim() || undefined });
       setName('');
       setDescription('');
       await refreshKbs();

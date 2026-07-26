@@ -54,7 +54,7 @@ export const useAppStore = create<AppState>()(
       maxTokens: 2048,
 
       refreshKbs: async () => {
-        const kbs = await api.get<KBResponse[]>('/api/v1/kb/');
+        const kbs = await api.get<KBResponse[]>('/api/v1/kb');
         set({ kbs });
       },
       refreshProjects: async () => {
