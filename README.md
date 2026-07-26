@@ -15,15 +15,15 @@ A monolithic AI backend for a Vietnamese construction-materials domain assistant
 | Layer | Technology | Why |
 |---|---|---|
 | **API** | FastAPI (HTTP + SSE) | SSE for the chat UI's token stream |
-| **LLM / embeddings / vision / TTS** | OpenRouter (OpenAI-compatible), model per task set independently in `.env` | One API key, swappable models per task without code changes |
-| **Vector store** | Qdrant | Named-vector collection, batched upsert (200 pts/request — large PDFs otherwise hit `WriteTimeout`) |
+| **LLM / embeddings / vision** | OpenRouter (OpenAI-compatible), model per task set independently in `.env` | One API key, swappable models per task without code changes |
+| **Vector store** | Qdrant | Named-vector collection, batched upsert (200 pts/request — large PDFs otherwise hit `WriteTimeout`); dense-vector search only today despite a sparse (BM25) config also present — see `docs/kien-truc-he-thong.md` §16 |
 | **Relational store** | PostgreSQL 16 + SQLAlchemy (async, `asyncpg`) + Alembic | Users, KBs, documents, and **structured** material-price rows (`material_prices` table) — exact lookups, not vector search |
 | **Job queue** | RabbitMQ (`aio-pika`) | User-initiated document uploads only. System-KB seeding at startup bypasses the queue and calls the ingestion pipeline directly (no consumer round-trip needed for a background one-shot job) |
-| **STT** | `faster-whisper` (CTranslate2), self-hosted, **CPU or GPU** | No external STT API/serverless — runs in-process, model configurable via `.env` (`WHISPER_MODEL_SIZE/DEVICE/COMPUTE_TYPE`) |
-| **TTS** | OpenRouter `openai/gpt-audio-mini` via chat-completions (`modalities: ["text","audio"]`, PCM16 stream → WAV wrapped in-process) | OpenRouter has no dedicated `/audio/speech` endpoint; audio-output chat models are the only TTS-shaped option available there — see caveat below |
+| **STT** | `faster-whisper` (CTranslate2) running **PhoWhisper** (Vietnamese fine-tune), `STT_BACKEND=local` (in-process) or `http` (your own GPU box via tunnel — used for GPU-less hosts like Railway) | No external STT API dependency; PhoWhisper measurably beats plain Whisper on Vietnamese |
+| **TTS** | OpenAI's real `/v1/audio/speech` (`tts-1`), called directly — separate `OPENAI_API_KEY`, not via OpenRouter | OpenRouter has no genuine TTS endpoint; only "TTS-shaped" option there is a conversational audio-chat model, which can paraphrase instead of reading verbatim (see §2.3) |
 | **Tool calling / MCP** | Custom `Tool` + `handle_*` registry (`app/core/mcp/tools/`), OpenAI-style tool-calling loop (`app/core/llm/tool_loop.py`) | Price/quantity/cost math is deterministic Python, never LLM-computed — see §4 |
 | **Deep research** | LangGraph graph (expand → search → aggregate → quality-check → summarize) | Separate problem from tool-calling (iterative web search), kept as its own graph rather than folded into the tool loop |
-| **Frontend** | Next.js 16 (App Router) + React 19, Tailwind, Zustand store | Single chat surface — search/research/voice are composer actions, not separate routes (see §6) |
+| **Frontend** | Next.js 16 (App Router) + React 19, Tailwind, Zustand store | Chat/Search/Research are composer actions in one chat view, not separate routes (see §5) |
 | **Auth** | JWT (access + refresh) + OAuth2 (Google, GitHub) | |
 | **Monitoring** | Prometheus + Grafana (optional profile) | |
 
@@ -31,25 +31,39 @@ A monolithic AI backend for a Vietnamese construction-materials domain assistant
 
 ## 2. System flow
 
-### 2.1. Chat (RAG) — the default path
+### 2.1. Chat — the full request pipeline
+
+The frontend always sends `mode: "agent"` (there's no mode picker in the UI for this) — five
+checks run in order, stopping at the first match:
 
 ```
 User message → POST /api/v1/chat/stream
    │
-   ├─ form_submission present?  → skip straight to the fixed-pipeline tool (§4.3), no LLM
+   ├─ 1. form_submission present?
+   │       → run the construction-cost tool directly (§4), no detection needed
    │
-   ├─ detect_intent(message)   app/core/chat/intent.py
-   │     matches a known fixed intent (e.g. construction cost)?
+   ├─ 2. detect_small_talk(message)   app/core/chat/intent.py
+   │       exact-match greeting/farewell/thanks/etc.?
+   │       → canned reply, ZERO LLM calls, ~0.1s (see docs/kien-truc-he-thong.md §7)
+   │
+   ├─ 3. detect_intent(message)
+   │       matches the fixed construction-cost intent?
    │       → SSE `form_request` event, render a form client-side, LLM never invoked
    │
-   ├─ mode == "agent"?  → run_tool_loop() — LLM decides whether to call
-   │     lookup_material_price / calculate_construction_cost itself (§4.4)
+   ├─ 4. off-topic guard   app/core/chat/topic_guard.py
+   │       (only when no kb_id/project_id/skill_id is active)
+   │       cheap classifier call says "not remotely related to construction/
+   │       engineering/tech"? → polite refusal, main model never called
+   │       (docs/kien-truc-he-thong.md §8)
    │
-   └─ mode == "rag" (default) → QdrantStore hybrid retrieval on the active KB
-         → chunks injected into the prompt → OpenRouterClient.stream_chat()
-         → SSE token deltas → frontend renders + (if the turn was voice-
-           initiated) speaks the finished reply back
+   └─ 5. run_tool_loop() — last 10 messages fetched as history, LLM decides
+         whether to call lookup_material_price/calculate_construction_cost
+         itself (§4) → SSE token deltas → frontend renders + (if the turn
+         was voice-initiated) speaks the finished reply back
 ```
+
+Full step-by-step detail, including the DB tables/Qdrant payload involved at each stage:
+**[docs/kien-truc-he-thong.md](docs/kien-truc-he-thong.md)**.
 
 ### 2.2. Document ingestion (upload or system-KB seed)
 
@@ -94,30 +108,43 @@ PDF/DOCX/TXT bytes
 ### 2.3. Voice
 
 ```
-Composer "Speak" button → MediaRecorder (browser) → stop → webm blob
+Composer mic button → MediaRecorder (browser) → stop → webm blob
    │
    ▼
-POST /api/v1/voice/stt  →  LocalWhisperService.transcribe()
-   │   faster-whisper, in-process, CPU int8 or GPU float16 per WHISPER_DEVICE
+POST /api/v1/voice/stt  →  STTProvider.transcribe()  (app/core/voice/stt.py)
+   │   STT_BACKEND=local (in-process faster-whisper, CPU/GPU) or
+   │   STT_BACKEND=http (a GPU box you run yourself, e.g. local-gpu-stt/,
+   │   reached over an ngrok tunnel — the way to get GPU STT on a host
+   │   with no GPU, e.g. Railway). Model: PhoWhisper (VinAI's Vietnamese
+   │   Whisper fine-tune) via a CTranslate2 conversion — picked over plain
+   │   Whisper after real testing showed it's meaningfully more accurate
+   │   on Vietnamese speech.
    ▼
-transcript → auto-sent as a chat message (mode="chat", viaVoice=true)
-   │   (construction-cost questions still route through the form — see §2.1;
-   │   the form's *result*, once submitted, is what gets spoken back)
+transcript → auto-sent as a normal chat message (viaVoice=true) → goes
+through the full pipeline in §2.1 like any typed message (small talk,
+off-topic guard, and RAG/tool-calling all apply identically — there is
+no via_voice flag sent to the backend at all)
+   │
    ▼
 LLM reply streamed + displayed as normal chat text
    │
    ▼
-POST /api/v1/voice/tts/stream  →  OpenRouterClient.tts_stream()
-   │   chat-completions w/ modalities=["text","audio"], stream=true,
-   │   audio.format=pcm16 (the only format OpenRouter allows while
-   │   streaming) → base64 PCM16 chunks collected → wrapped in a WAV
-   │   header in-process (24kHz mono 16-bit)
+POST /api/v1/voice/tts/stream  →  OpenAITTSService.stream()
+   │   calls OpenAI's real /v1/audio/speech directly (separate
+   │   OPENAI_API_KEY, not routed through OpenRouter) — takes the exact
+   │   text already streamed above and renders it as audio verbatim
    ▼
-frontend plays the WAV; a pulsing "🔊 Speaking…" indicator shows next to
-the mic button while it plays
+frontend plays the WAV; the whole composer (typing, sending, starting a
+new recording) stays locked until playback actually finishes
 ```
 
-**Known caveat, by design, not a bug:** `gpt-audio-mini` is a *conversational* audio model, not a dedicated TTS engine — even with an explicit "read verbatim, don't converse" system prompt, it can paraphrase rather than reading the displayed text word-for-word (verified: `"Hello! How can I assist you today?"` was spoken back as `"Hi there! I'm here to help with anything you need. How can I support you today?"`). OpenRouter has no real `/audio/speech` TTS endpoint to fall back to. The UI therefore doesn't promise a word-for-word match — it shows a speaking indicator instead of literal captions. If verbatim reading matters for your use case, swap `TTSProvider` for a real TTS engine (ElevenLabs, a self-hosted engine like Piper/Coqui) instead of OpenRouter's audio-chat models.
+**Fixed since an earlier version:** TTS used to go through OpenRouter's `gpt-audio-mini` via
+`/chat/completions` (`modalities: ["text","audio"]`) — since that's a *conversational* audio
+model rather than a dedicated TTS engine, it would sometimes paraphrase instead of reading the
+displayed text verbatim, even with an explicit "read verbatim" system prompt (OpenRouter has no
+real `/audio/speech` endpoint to fall back to). Replaced with a direct call to OpenAI's actual
+TTS API, which only ever renders the given text — no conversational framing, no risk of
+"replying" instead of reading.
 
 ---
 
@@ -132,7 +159,7 @@ The 2 system knowledge bases are seeded automatically at first startup from `see
 
 Full pipeline detail, header-detection heuristics, and known data-quality caveats (a source PDF genuinely lacking a price category is reported honestly as "no data", not guessed): **[docs/construction-pricing-pipeline.md](docs/construction-pricing-pipeline.md)**.
 
-### 4. Why price math is deterministic Python, never LLM-computed
+## 4. Why price math is deterministic Python, never LLM-computed
 
 This is the core design constraint of the whole domain layer, not a stylistic choice:
 
@@ -144,11 +171,33 @@ Two fixed-pipeline vs. free tool-calling **modes** exist side by side:
 - **Fixed pipeline** (`app/core/chat/intent.py` → form → direct tool call, no LLM at all) for the one well-known, high-stakes intent ("giá xây nhà 100m2 ở Hà Nội") — guarantees correct parameters instead of trusting an LLM to parse them from free text.
 - **`mode="agent"`** (`run_tool_loop()`) for open-ended questions — the LLM decides whether/which tool to call, with the risk of misparsed parameters that the fixed pipeline avoids.
 
+Two more checks run *before* either of the above, both skip the LLM (or use a cheap fixed one)
+to cut cost/latency on turns that don't need the real model at all: exact-match small talk
+(greetings/thanks/etc. → canned reply, ~0.1s) and an off-topic guard (a cheap classifier call
+refuses questions with no plausible connection to construction/engineering/tech, e.g. sports
+trivia, before the user's actual selected — possibly premium — model ever gets called). Full
+detail: **[docs/kien-truc-he-thong.md](docs/kien-truc-he-thong.md)** §7–§9.
+
 ---
 
-## 5. Frontend — one chat surface, no separate pages
+## 5. Frontend
 
-Search, research, and voice are **composer actions inside the chat view**, not separate sidebar routes — confirmed during a UI audit that `/search` and `/research` were duplicate views of logic `ChatArea.handleSend()` already branches on by `mode`. The sidebar only has Chat and Knowledge Base. Model selection and output-tuning controls (temperature/max_tokens/top_k) were removed from the UI entirely — every user gets the same hardcoded `openai/gpt-4o-mini` (`frontend/components/chat/ChatArea.tsx::FIXED_MODEL`), consistent with the "no LLM-computed prices" philosophy in §4: nothing about a cost estimate should silently vary by which model a user happened to have picked.
+Next.js 16 (App Router) + React 19 + Tailwind, single-page chat app with a 6-item sidebar:
+**Chat**, **Notes**, **Projects**, **Knowledge Base**, **Usage**, **Settings**.
+
+- **Chat** is the main surface — the composer has a Chat/Search/Research mode switch (not
+  separate routes; picking Search/Research just changes which streaming endpoint the current
+  turn hits) plus a mic button for voice. Sidebar has a "RAG scope" section to pick the active
+  KB/Project for the conversation.
+- **Settings** has a 3-tier model picker (Budget/Standard/Premium — a frontend-owned constant
+  list, there's no `/models` backend endpoint), temperature, and max tokens — these apply to
+  new messages, they don't retroactively change anything already answered.
+- **Knowledge Base** / **Projects** / **Notes** / **Usage** are straightforward CRUD screens
+  against the matching REST endpoints.
+
+Server-side `rewrites()` proxy `/api/*` to the backend, preserving the `Authorization` header
+and — critically — **not** compressing/buffering SSE responses (`compress: false` in
+`next.config.mjs`), otherwise streamed tokens arrive all at once instead of incrementally.
 
 ---
 
@@ -167,8 +216,6 @@ git clone https://github.com/KhaiBoiPho/agentic-rag.git
 cd agentic-rag
 bash scripts/setup.sh              # creates .env with random secrets
 # edit .env — fill in OPENROUTER_API_KEY at minimum
-docker compose build app
-docker run --rm -v "$(pwd):/app" -w /app agentic-rag-app bash scripts/gen_protos.sh  # one-time, see docs/getting-started.md §3
 docker compose up -d --build
 ```
 
@@ -230,15 +277,16 @@ docker compose up -d
 Copy `.env.example` to `.env` and fill in your keys. Every variable is documented with inline comments in [.env.example](.env.example).
 
 **Minimum required:**
-- `OPENROUTER_API_KEY` — LLM chat, embeddings, vision OCR fallback, and TTS all go through OpenRouter
+- `OPENROUTER_API_KEY` — LLM chat, embeddings, and vision OCR fallback go through OpenRouter
+- `OPENAI_API_KEY` — real TTS (`/v1/audio/speech`), called directly, not via OpenRouter (§2.3)
 - `SECRET_KEY` + `JWT_SECRET_KEY` — generate with `openssl rand -hex 32` (done automatically by `scripts/setup.sh`)
 
 **Optional (feature-gated):**
-- Local Whisper GPU: `WHISPER_DEVICE=cuda`, `WHISPER_COMPUTE_TYPE=float16` (§8)
+- Local Whisper GPU: `STT_BACKEND=local`, `WHISPER_DEVICE=cuda`, `WHISPER_COMPUTE_TYPE=float16` (§8) — or `STT_BACKEND=http` to point at a GPU box you run yourself (`local-gpu-stt/`), for hosts with no GPU of their own
 - Deep research web search: `FIRECRAWL_API_KEY`
 - OAuth: `GOOGLE_CLIENT_ID/SECRET`, `GITHUB_CLIENT_ID/SECRET`
 
-**Not used anymore, may still appear in old notes:** ElevenLabs (`ELEVENLABS_*`), RunPod (`RUNPOD_*`) — both fully removed; TTS and STT are OpenRouter and self-hosted Whisper respectively (§2.3).
+**Not used anymore, may still appear in old notes:** ElevenLabs (`ELEVENLABS_*`), RunPod (`RUNPOD_*`, tried for STT then dropped — cold-start too slow), gRPC (`GRPC_HOST/PORT`, removed entirely — no real consumer ever used it).
 
 ---
 
@@ -293,10 +341,10 @@ agentic-rag/
 │   │   ├── ingestion/       # Ingestion pipelines (generic + price-extraction), OCR fallback, price_extractor
 │   │   ├── construction/    # Deterministic quantity/cost formulas (§4)
 │   │   ├── chat/            # Fixed-pipeline intent detection + form schemas
-│   │   ├── retrieval/       # Qdrant hybrid retriever
+│   │   ├── retrieval/       # Qdrant dense-vector retriever
 │   │   ├── llm/             # OpenRouter client + tool-calling loop
 │   │   ├── research/        # LangGraph research graph
-│   │   ├── voice/           # STT (local Whisper), TTS (OpenRouter audio)
+│   │   ├── voice/           # STT (local/http backends, PhoWhisper), TTS (OpenAI direct)
 │   │   ├── mcp/             # MCP server + tools (price_lookup, quantity, cost)
 │   │   ├── bootstrap/       # System-KB seeding (seed.py) + constants (system user/KB IDs)
 │   │   └── auth/            # JWT, OAuth, passwords
@@ -332,11 +380,11 @@ Swagger UI at http://localhost:8000/docs (when `APP_DEBUG=true`).
 | `POST` | `/api/v1/documents/upload/{kb_id}` | Upload document to KB (403 on system KBs) |
 | `POST` | `/api/v1/documents/upload-price/{kb_id}` | Upload a material price-announcement PDF (`region`, `price_period` query params) — extracts structured rows into Postgres alongside normal RAG chunking, see [docs/construction-pricing-pipeline.md](docs/construction-pricing-pipeline.md) |
 | `GET` | `/api/v1/documents/{kb_id}` | List documents in a KB |
-| `POST` | `/api/v1/chat/stream` | Streaming chat (SSE). `mode: "rag"` (default) or `"agent"` (LLM tool-calling, §4). A message matching a known fixed-pipeline intent (e.g. "giá xây nhà ...") returns a `form_request` event instead of an LLM answer; submit the filled form back via `form_submission` to run the matching tool directly, no LLM involved |
-| `POST` | `/api/v1/search` | Hybrid search |
+| `POST` | `/api/v1/chat/stream` | Streaming chat (SSE) — small talk / off-topic guard / fixed-intent form / agent tool-calling, in that order (§2.1). A message matching the fixed construction-cost intent returns a `form_request` event instead of an LLM answer; submit the filled form back via `form_submission` to run the tool directly, no detection re-run |
+| `POST` | `/api/v1/search` | Web search (Firecrawl) |
 | `POST` | `/api/v1/research` | Deep research (LangGraph) |
-| `POST` | `/api/v1/voice/stt` | Transcribe audio (local Whisper) |
-| `POST` | `/api/v1/voice/tts/stream` | Synthesize speech (OpenRouter audio, streamed WAV — §2.3) |
+| `POST` | `/api/v1/voice/stt` | Transcribe audio (STT_BACKEND=local or http — §2.3) |
+| `POST` | `/api/v1/voice/tts/stream` | Synthesize speech (OpenAI `/v1/audio/speech`, streamed WAV — §2.3) |
 | `GET` | `/health` | Health check |
 | `GET` | `/metrics` | Prometheus metrics |
 
@@ -344,5 +392,8 @@ Swagger UI at http://localhost:8000/docs (when `APP_DEBUG=true`).
 
 ## 15. Further reading
 
+- **[docs/kien-truc-he-thong.md](docs/kien-truc-he-thong.md)** (Vietnamese) — the deepest-detail system doc: every Postgres table and its purpose, the Qdrant payload shape, the full chat pipeline step by step, small talk, the off-topic guard, the tool-calling flow, ingestion, voice, every frontend screen, deployment, and known rough edges
 - [docs/getting-started.md](docs/getting-started.md) — clone-to-running walkthrough, first-run troubleshooting, end-to-end feature tests
 - [docs/construction-pricing-pipeline.md](docs/construction-pricing-pipeline.md) — full detail on the price-extraction heuristics, known data-quality limits, and how to add a new fixed-pipeline intent/form
+- [docs/railway-deploy.md](docs/railway-deploy.md) — deploying each service separately on Railway
+- [docs/local-gpu-stt-demo.md](docs/local-gpu-stt-demo.md) — running STT on your own GPU box + ngrok tunnel

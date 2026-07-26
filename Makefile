@@ -12,7 +12,7 @@ DC := docker compose
 
 .PHONY: setup build up down restart logs shell \
         migrate migrate-down migrate-gen \
-        proto test lint fmt \
+        test lint fmt \
         monitoring help
 
 # ─── First-time setup ─────────────────────────────────────────────────────────
@@ -55,10 +55,6 @@ migrate-down:
 migrate-gen:
 	@test -n "$(msg)" || (echo "Usage: make migrate-gen msg='your message'"; exit 1)
 	$(DC) run --rm migrate alembic revision --autogenerate -m "$(msg)"
-
-# ─── Proto compilation ────────────────────────────────────────────────────────
-proto:
-	bash scripts/gen_protos.sh
 
 # ─── Local dev (without Docker) ───────────────────────────────────────────────
 dev:

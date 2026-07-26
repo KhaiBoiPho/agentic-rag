@@ -10,7 +10,8 @@ tính năng chính hoạt động đúng.
 
 - Docker + Docker Compose v24+
 - `openssl` (để `scripts/setup.sh` sinh secret ngẫu nhiên)
-- 1 API key OpenRouter ([openrouter.ai/keys](https://openrouter.ai/keys)) — bắt buộc, dùng cho chat, embedding, OCR fallback (file scan) và TTS
+- 1 API key OpenRouter ([openrouter.ai/keys](https://openrouter.ai/keys)) — bắt buộc, dùng cho chat, embedding, OCR fallback (file scan)
+- 1 API key OpenAI thật ([platform.openai.com](https://platform.openai.com/api-keys)) — dùng cho TTS (`/v1/audio/speech`), gọi trực tiếp, không qua OpenRouter — thiếu key này thì mọi thứ khác vẫn chạy, chỉ tính năng đọc giọng nói trả lời không hoạt động
 - Ổ đĩa trống ≥ 500MB cho `seed_data/` (kiến thức xây dựng + giá vật liệu 3 vùng HN/DN/HCM)
 - (Tuỳ chọn) GPU NVIDIA nếu muốn chạy Whisper `medium`/`large` cho STT nhanh hơn — xem mục 8
 
