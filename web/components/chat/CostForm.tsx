@@ -45,6 +45,7 @@ export default function CostForm({
         { value: "hoan_thien_cao_cap", label: t.costForm.finishHigh },
       ],
     },
+    { name: "target_budget_vnd", label: t.costForm.budget, type: "number", required: false },
   ];
 
   const fields = form.fields?.length ? form.fields : DEFAULT_FIELDS;
@@ -80,7 +81,9 @@ export default function CostForm({
 
   function displayValue(f: FormField): string {
     const raw = submittedData?.[f.name];
-    if (raw === undefined || raw === null || raw === "") return "—";
+    // an untouched optional numeric field round-trips as 0, not empty
+    const empty = raw === undefined || raw === null || raw === "" || (!f.required && raw === 0);
+    if (empty) return "—";
     if (f.type === "select") {
       return f.options?.find((o) => o.value === String(raw))?.label ?? String(raw);
     }

@@ -75,10 +75,11 @@ services:
       - hf_cache:/root/.cache/huggingface
     networks:
       - agentic-net
-    # No GPU reservation here anymore — STT moved to a separate GPU box
-    # (STT_BACKEND=http, see local-gpu-stt/), so the app container itself no
-    # longer needs GPU passthrough. If you switch back to STT_BACKEND=local
-    # with WHISPER_DEVICE=cuda, re-add:
+    # No GPU reservation here — STT_BACKEND=local runs PhoWhisper in-process
+    # on WHISPER_DEVICE=cpu (see .env), so the app container doesn't need
+    # GPU passthrough. STT_BACKEND=http (see local-gpu-stt/) is the
+    # alternative for GPU-speed PhoWhisper without adding GPU to this
+    # container. If you set WHISPER_DEVICE=cuda here instead, re-add:
     #   deploy:
     #     resources:
     #       reservations:

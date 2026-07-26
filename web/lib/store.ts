@@ -1,11 +1,12 @@
 import { create } from "zustand";
 import { api } from "./api";
 import { DEFAULT_MODEL } from "./models";
-import type { AppSettings, Conversation, KB, Project } from "./types";
+import type { AppSettings, ChatMessage, Conversation, KB, Project } from "./types";
 
 const SETTINGS_KEY = "cot.settings";
 const CONV_KEY = "cot.conversations";
 const LANG_KEY = "cot.lang";
+const MSG_KEY_PREFIX = "cot.msgs.";
 
 type Lang = "vi" | "en";
 
@@ -42,6 +43,34 @@ function saveConversations(list: Conversation[]) {
   if (typeof window !== "undefined") localStorage.setItem(CONV_KEY, JSON.stringify(list.slice(0, 50)));
 }
 
+// Per-conversation message history. There is no backend endpoint to fetch a
+// conversation's past turns (chat.py only exposes POST /stream; the
+// messages table is written for LLM context injection, not read back) — so
+// history is kept client-side, one localStorage entry per conversation,
+// mirroring the sidebar's own conversation-list persistence.
+export function loadMessages(conversationId: string): ChatMessage[] {
+  if (typeof window === "undefined") return [];
+  try {
+    return JSON.parse(localStorage.getItem(MSG_KEY_PREFIX + conversationId) || "[]");
+  } catch {
+    return [];
+  }
+}
+export function saveMessages(conversationId: string, messages: ChatMessage[]) {
+  if (typeof window === "undefined") return;
+  try {
+    // never persist a message as still "streaming" — that state is only
+    // meaningful for the live SSE connection within the same session
+    const clean = messages.slice(-60).map((m) => ({ ...m, streaming: false }));
+    localStorage.setItem(MSG_KEY_PREFIX + conversationId, JSON.stringify(clean));
+  } catch {
+    /* localStorage full/unavailable — history just won't persist */
+  }
+}
+function removeMessages(conversationId: string) {
+  if (typeof window !== "undefined") localStorage.removeItem(MSG_KEY_PREFIX + conversationId);
+}
+
 interface Store {
   kbs: KB[];
   projects: Project[];
@@ -61,6 +90,7 @@ interface Store {
 
   upsertConversation: (c: Conversation) => void;
   removeConversation: (id: string) => void;
+  togglePinConversation: (id: string) => void;
   clearConversations: () => void;
 }
 
@@ -95,17 +125,25 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   upsertConversation: (c) => {
+    const existing = get().conversations.find((x) => x.id === c.id);
     const rest = get().conversations.filter((x) => x.id !== c.id);
-    const next = [c, ...rest];
+    const next = [{ ...c, pinned: c.pinned ?? existing?.pinned }, ...rest];
     saveConversations(next);
     set({ conversations: next });
   },
   removeConversation: (id) => {
     const next = get().conversations.filter((x) => x.id !== id);
     saveConversations(next);
+    removeMessages(id);
+    set({ conversations: next });
+  },
+  togglePinConversation: (id) => {
+    const next = get().conversations.map((x) => (x.id === id ? { ...x, pinned: !x.pinned } : x));
+    saveConversations(next);
     set({ conversations: next });
   },
   clearConversations: () => {
+    get().conversations.forEach((c) => removeMessages(c.id));
     saveConversations([]);
     set({ conversations: [] });
   },

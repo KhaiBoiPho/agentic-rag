@@ -6,7 +6,7 @@ import json
 import time
 from collections.abc import AsyncGenerator
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -18,6 +18,7 @@ from app.core.chunking.base import count_tokens
 from app.core.llm.openrouter import OpenRouterClient
 from app.core.retrieval.retriever import Retriever
 from app.core.usage.pricing import estimate_cost_usd
+from app.db.postgres.repositories.message_repo import MessageRepository
 from app.db.postgres.repositories.usage_repo import UsageRepository
 
 router = APIRouter()
@@ -37,6 +38,29 @@ khu vực (Hà Nội, Đà Nẵng, TPHCM).
 Với câu hỏi chuyên môn: trả lời chính xác, ngắn gọn, dựa trên dữ liệu \
 được cung cấp khi có (trích dẫn nguồn nếu có); nếu không chắc, nói rõ là \
 không chắc thay vì đoán bừa.
+
+QUAN TRỌNG — giá vật liệu cụ thể: TUYỆT ĐỐI KHÔNG tự bịa ra con số giá \
+chính xác (kiểu "285.142 VNĐ", "18.000đ/kg"...) khi không có dữ liệu thật \
+nào được cung cấp kèm câu hỏi (không có đoạn trích dẫn/ngữ cảnh nào ở \
+trên). Việc này đúng ngay cả khi bạn "biết" một mức giá điển hình từ dữ \
+liệu huấn luyện — mức giá vật liệu thay đổi theo thời gian/vùng/nhà cung \
+cấp, một con số nghe có vẻ chính xác nhưng không có nguồn thật gây hiểu \
+lầm nghiêm trọng hơn nhiều so với việc thẳng thắn nói không có dữ liệu. \
+Khi bị hỏi giá mà không có ngữ cảnh nào kèm theo, hãy nói rõ bạn cần dữ \
+liệu thật để trả lời chính xác, và đề nghị người dùng chọn Kho tri thức \
+"Dự toán giá nhà" ở thanh bên hoặc nêu cụ thể vật liệu + khu vực để tra \
+cứu — không đưa ra bảng giá tự nghĩ ra như thể đó là giá thực tế.
+
+QUAN TRỌNG — khi câu hỏi CHUNG CHUNG nhưng dữ liệu được cung cấp chỉ hẹp/ \
+không đại diện: nếu người dùng hỏi kiểu chung chung ("giá vật liệu tham \
+khảo", "vật liệu xây dựng giá bao nhiêu"...) không nêu tên vật liệu cụ \
+thể, mà đoạn dữ liệu được cung cấp chỉ chứa 1 sản phẩm hẹp/ít phổ biến \
+(vd tấm đan cống thoát nước, phụ kiện chuyên dụng...) — ĐỪNG liệt kê các \
+con số giá của sản phẩm hẹp đó ra làm nội dung câu trả lời (kể cả kèm \
+caveat). Chỉ nói ngắn gọn 1-2 câu: dữ liệu tìm được không đại diện cho \
+vật liệu xây dựng phổ biến (có thể nêu tên sản phẩm hẹp đó, KHÔNG kèm \
+giá), rồi hỏi ngay người dùng muốn xem giá loại vật liệu phổ biến nào \
+(thép, xi măng, gạch, sơn, cát, đá...) để tra đúng.
 
 Với lời chào hỏi, tạm biệt, cảm ơn, hay chuyện phiếm nhẹ nhàng: đáp lại \
 tự nhiên, thân thiện, ngắn gọn như một cuộc trò chuyện bình thường — \
@@ -76,6 +100,27 @@ class ChatRequest(BaseModel):
     score_threshold: float = 0.5
     mode: str = "rag"  # "rag" | "agent" — "agent" lets the LLM call construction-cost tools
     form_submission: FormSubmission | None = None  # human-in-the-loop form result, see intent.py
+    # True when this message's text came from STT rather than being typed.
+    # Skips fixed-intent form detection (§6 README) — an inline form doesn't
+    # make sense in a hands-free voice flow, and a misheard word triggering
+    # or failing to trigger it unpredictably is exactly the kind of glitch
+    # that's embarrassing in a live demo. Voice turns always go straight to
+    # RAG/plain chat instead.
+    via_voice: bool = False
+
+
+class HistoryMessage(BaseModel):
+    id: str
+    role: str  # "user" | "assistant"
+    content: str
+    sources: list[dict] | None = None
+    created_at: int
+
+
+class ConversationHistoryResponse(BaseModel):
+    conversation_id: str
+    kb_id: str | None
+    messages: list[HistoryMessage]
 
 
 @router.post("/stream")
@@ -83,8 +128,6 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
     """SSE stream for the chat UI's token stream."""
     llm = OpenRouterClient()
     retriever = Retriever()
-    from app.db.postgres.repositories.message_repo import MessageRepository
-
     msg_repo = MessageRepository()
 
     # Determine system prompt: skill > default
@@ -119,6 +162,10 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
                     "region": data["region"],
                     "finish_level": data.get("finish_level", "hoan_thien_co_ban"),
                 }
+                # Optional — see intent.py's FORM_SCHEMAS comment. Reverse-
+                # derives an achievable area in build_cost_facts() instead of
+                # only ever answering "what does the area you typed cost".
+                target_budget = data.get("target_budget_vnd")
                 cost = await _compute_cost(tool_args)
                 if cost.get("error"):
                     yield _sse({"type": "text", "delta": cost["error"], "done": False})
@@ -136,7 +183,9 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
                 rag_ctx = (
                     {"kind": "kb", "name": cost["rag_kb_name"]} if cost.get("rag_kb_name") else None
                 )
-                prompt = COST_PRESENT_PROMPT.format(facts=build_cost_facts(cost))
+                prompt = COST_PRESENT_PROMPT.format(
+                    facts=build_cost_facts(cost, target_budget=target_budget)
+                )
                 reply = ""
                 async for token in llm.stream_chat(
                     messages=[{"role": "user", "content": prompt}],
@@ -170,6 +219,8 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
                             f"[Dự toán chi phí xây dựng] {tool_args['floor_area_m2']:.0f} m² sàn, "
                             f"vùng {tool_args['region']}, mức {tool_args['finish_level']}"
                         )
+                        if target_budget:
+                            req_line += f", ngân sách mục tiêu {target_budget:,.0f} đ"
                         await msg_repo.add(body.conversation_id, "user", req_line)
                         await msg_repo.add(
                             body.conversation_id, "assistant", reply, sources=form_sources or None
@@ -214,8 +265,9 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
         # Known intents (e.g. "giá xây nhà ...") skip the LLM entirely and
         # ask the frontend to render a structured form instead of letting
         # the model guess parameters or ask clarifying questions in free
-        # text — see app/core/chat/intent.py.
-        intent = detect_intent(body.message)
+        # text — see app/core/chat/intent.py. Skipped entirely for voice
+        # turns (body.via_voice) — see ChatRequest.via_voice.
+        intent = None if body.via_voice else detect_intent(body.message)
         if intent is not None and intent in FORM_SCHEMAS:
             schema = FORM_SCHEMAS[intent]
             event = {
@@ -325,12 +377,20 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
             return
 
         search_kb_id: str | list[str] | None = body.kb_id
+        rag_scope_name: str | None = None
         if body.project_id:
             from app.db.postgres.repositories.project_repo import ProjectRepository
 
             project = await ProjectRepository().get(body.project_id, str(current_user.id))
             if project and project.knowledge_bases:
                 search_kb_id = [str(kb.id) for kb in project.knowledge_bases]
+                rag_scope_name = project.name
+        elif body.kb_id:
+            from app.db.postgres.repositories.kb_repo import KnowledgeBaseRepository
+
+            kb = await KnowledgeBaseRepository().get_by_id(body.kb_id)
+            if kb:
+                rag_scope_name = kb.name
 
         if body.use_rag and search_kb_id:
             chunks = await retriever.search(
@@ -382,7 +442,16 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
             reply += token
             yield _sse({"type": "text", "delta": token, "done": False})
 
-        yield _sse({"type": "text", "delta": "", "done": True, "sources": sources})
+        # Badge only when retrieval actually returned something — an active
+        # KB/project with zero matching chunks (off-topic question) must NOT
+        # be credited as "RAG · <name>", same rule the form-submission path
+        # already follows (see rag_ctx above).
+        rag_ctx = (
+            {"kind": "project" if body.project_id else "kb", "name": rag_scope_name or "Kho tri thức"}
+            if sources
+            else None
+        )
+        yield _sse({"type": "text", "delta": "", "done": True, "sources": sources, "rag_context": rag_ctx})
 
         # Persist this turn for future context (best-effort — the reply has
         # already been delivered in full above, so a write failure is
@@ -424,3 +493,35 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
             pass
 
     return StreamingResponse(generate(), media_type="text/event-stream", headers=SSE_HEADERS)
+
+
+@router.get("/history/{conversation_id}", response_model=ConversationHistoryResponse)
+async def get_history(conversation_id: str, current_user: CurrentUser):
+    """Full message history for a conversation, so the chat UI can restore
+    a past conversation on load instead of always starting empty — the
+    `messages` table already exists (written for LLM context injection),
+    this just reads it back. Ownership-scoped: 404s rather than 403s for a
+    conversation that isn't the caller's, to avoid confirming it exists."""
+    msg_repo = MessageRepository()
+    try:
+        conv = await msg_repo.get_conversation(conversation_id, str(current_user.id))
+        rows = await msg_repo.get_all(conversation_id, str(current_user.id))
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Conversation not found") from None
+    if conv is None or rows is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    return ConversationHistoryResponse(
+        conversation_id=conversation_id,
+        kb_id=str(conv.kb_id) if conv.kb_id else None,
+        messages=[
+            HistoryMessage(
+                id=str(m.id),
+                role=m.role,
+                content=m.content,
+                sources=json.loads(m.sources) if m.sources else None,
+                created_at=int(m.created_at.timestamp()),
+            )
+            for m in rows
+        ],
+    )

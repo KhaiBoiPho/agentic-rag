@@ -145,6 +145,18 @@ QUY TẮC BẮT BUỘC:
   số tiền của hạng mục đó, và nói rõ đó là giá tham khảo từ web, chưa xác thực.
 - Nêu rõ hạng mục không có dữ liệu giá; nếu thiếu thì giải thích vì sao không đưa tổng.
 - Nhắc ngắn gọn: đây chỉ là chi phí vật liệu chính, chưa gồm nhân công/thiết bị/lợi nhuận/VAT.
+- NẾU VÀ CHỈ NẾU có dòng "NGÂN SÁCH MỤC TIÊU: ... đ" xuất hiện NGUYÊN VĂN
+  trong dữ liệu bên dưới: đây là câu hỏi thực sự của người dùng ("với ngân
+  sách này thì xây được bao nhiêu") — trả lời thẳng vào đó trước (diện tích
+  khả thi ước tính), rồi mới nêu chi phí của diện tích họ gõ ở trên để đối
+  chiếu. Nếu chi phí đó vượt xa ngân sách, nói THẲNG là vượt (không giảm
+  nhẹ), và không tự bịa thêm phương án nào ngoài con số diện tích đã tính
+  sẵn.
+- NẾU KHÔNG có dòng "NGÂN SÁCH MỤC TIÊU" đó trong dữ liệu (trường hợp phổ
+  biến nhất): TUYỆT ĐỐI KHÔNG nhắc tới từ "ngân sách" hay tự đặt ra một
+  ngân sách nào cả — chỉ trình bày bảng chi phí trực tiếp cho diện tích đã
+  cho, đúng như một dự toán thông thường. Không suy diễn "khoảng ngân sách"
+  từ diện tích/chi phí đã tính.
 - Dùng markdown gọn (in đậm số tiền, gạch đầu dòng). KHÔNG dùng bảng, KHÔNG dùng emoji.
 
 DỮ LIỆU DỰ TOÁN:
@@ -154,9 +166,20 @@ Viết câu trả lời:
 """
 
 
-def build_cost_facts(data: dict) -> str:
+def build_cost_facts(data: dict, target_budget: float | None = None) -> str:
     """Compact, number-exact fact sheet fed to COST_PRESENT_PROMPT — the LLM
-    only rephrases it, so every figure here is what the user ends up seeing."""
+    only rephrases it, so every figure here is what the user ends up seeing.
+
+    `target_budget` (VNĐ, optional): when the user stated a budget, the cost
+    formulas are linear in floor area (each material's quantity is area ×
+    a fixed per-m² coefficient, priced at a fixed unit price — no bulk
+    discount is modeled), so cost-per-m² = priced_subtotal / area is exact,
+    not an approximation, and target_budget / cost-per-m² gives the area
+    that budget actually buys. This is arithmetic on the same numbers
+    already computed for the direct estimate, not a second pricing pass —
+    see cost_tool.py module docstring for why area-based estimation is the
+    right precision level here in the first place.
+    """
     lines = [
         f"Diện tích: {data['area']:.0f} m² sàn. Vùng: {data['region']}. "
         f"Mức hoàn thiện: {_FINISH_LABELS.get(data['finish_level'], data['finish_level'])}.",
@@ -195,6 +218,27 @@ def build_cost_facts(data: dict) -> str:
         lines.append("Nguồn web (khớp với số [n] ở trên):")
         for s in data["web_sources"]:
             lines.append(f"[{s['index']}] {s['title']} — {s['url']}")
+
+    if target_budget and target_budget > 0:
+        lines.append("")
+        lines.append(f"NGÂN SÁCH MỤC TIÊU: {target_budget:,.0f} đ.")
+        if data["has_full_pricing"] and data["area"] > 0:
+            cost_per_m2 = data["priced_subtotal"] / data["area"]
+            suggested_area = target_budget / cost_per_m2
+            lines.append(
+                f"Đơn giá vật liệu chính ước tính: {cost_per_m2:,.0f} đ/m² sàn "
+                f"(ở mức hoàn thiện đã chọn)."
+            )
+            lines.append(
+                f"→ Với ngân sách này, diện tích sàn khả thi ước tính khoảng "
+                f"{suggested_area:.0f} m² (cùng vùng/mức hoàn thiện, chỉ tính vật liệu "
+                f"4 hạng mục chính — không gồm nhân công/thiết bị/lợi nhuận/VAT)."
+            )
+        else:
+            lines.append(
+                "KHÔNG tính được diện tích khả thi từ ngân sách vì thiếu dữ liệu giá "
+                f"cho: {', '.join(data['missing'])} — nêu rõ điều này thay vì đoán."
+            )
     return "\n".join(lines)
 
 

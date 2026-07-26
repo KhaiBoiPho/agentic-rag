@@ -12,7 +12,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.config import settings
-from app.core.bootstrap.seed import seed_system_kb_documents
 from app.db.postgres.base import init_db
 from app.db.qdrant.client import QdrantStore
 from app.monitoring.metrics import init_metrics
@@ -92,16 +91,11 @@ def create_app() -> FastAPI:
 
         asyncio.create_task(_start_consumer_safe())
 
-        # System knowledge bases (Kiến thức xây dựng / Dự toán giá nhà) —
-        # ingests seed_data/ once (gated on document_count == 0), see
-        # app/core/bootstrap/seed.py. Backgrounded since it can take minutes.
-        async def _seed_system_kbs_safe():
-            try:
-                await seed_system_kb_documents()
-            except Exception as exc:
-                logger.warning(f"System KB seeding failed: {exc}")
-
-        asyncio.create_task(_seed_system_kbs_safe())
+        # The 4 system knowledge bases (rows created by migrations
+        # 0003/0007) start empty — no more automatic seed_data/ ingestion at
+        # startup. They're populated by manually uploading documents through
+        # the normal UI upload flow, same as any user KB — see
+        # app/core/bootstrap/constants.py.
 
         # Local Whisper STT model — load once now instead of paying the
         # cold-load cost on the first voice request. Backgrounded since

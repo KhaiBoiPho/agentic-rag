@@ -51,6 +51,14 @@ class KnowledgeBaseRepository:
             )
             return result.scalar_one_or_none()
 
+    async def get_by_id(self, kb_id: str) -> KnowledgeBase | None:
+        """Unscoped lookup (no ownership check) — for display purposes only
+        (e.g. resolving a KB's name for the chat "RAG · <name>" badge), where
+        the caller already has a legitimate kb_id (from their own chat
+        request) and isn't asking "do I own this", just "what's it called"."""
+        async with get_session() as s:
+            return await s.get(KnowledgeBase, uuid.UUID(kb_id))
+
     async def delete(self, kb_id: str, user_id: str) -> bool:
         async with get_session() as s:
             kb = await s.get(KnowledgeBase, uuid.UUID(kb_id))

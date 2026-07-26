@@ -115,11 +115,11 @@ hoá vận hành, phù hợp quy mô hiện tại. Không còn dùng gRPC (đã 
 13 bảng, chia theo nhóm chức năng:
 
 ### Người dùng & xác thực
-- **`users`** — tài khoản (gồm 1 user hệ thống cố định `SYSTEM_USER_ID` sở hữu 2 KB hệ thống)
+- **`users`** — tài khoản (gồm 1 user hệ thống cố định `SYSTEM_USER_ID` sở hữu 4 KB hệ thống)
 - **`refresh_tokens`** — refresh token JWT còn hiệu lực, để logout/revoke được
 
 ### Tri thức & tài liệu
-- **`knowledge_bases`** — mỗi KB có `is_system` (true = 2 KB hệ thống, chỉ đọc) và `document_count`
+- **`knowledge_bases`** — mỗi KB có `is_system` (true = 1 trong 4 KB hệ thống, ID/tên cố định nhưng vẫn upload/xoá tài liệu bên trong bình thường — chỉ riêng xoá cả KB mới bị chặn) và `document_count`
 - **`documents`** — file đã upload vào 1 KB, `status`: `pending → processing → done/error`
 - **`material_prices`** — **dữ liệu giá có cấu trúc**, trích xuất từ PDF giá vật liệu. Đây là bảng
   quan trọng nhất cho tính năng dự toán — mỗi dòng là 1 vật liệu cụ thể (tên, đơn giá, đơn vị,
@@ -363,13 +363,10 @@ PDF/DOCX/TXT
           giá), Postgres giữ số liệu giá chính xác dùng để tính toán
 ```
 
-**2 điểm vào, cùng pipeline**:
-- **User upload** (`POST /documents/upload/{kb_id}` hoặc `/upload-price/{kb_id}`) → đẩy job vào
-  RabbitMQ → `app/queue/consumer.py` xử lý nền
-- **Seed hệ thống** (`app/core/bootstrap/seed.py`, chạy nền lúc `on_startup`) → gọi thẳng pipeline,
-  **bỏ qua RabbitMQ** (job 1 lần lúc khởi động, không cần vòng qua consumer). Idempotent theo
-  **từng file** (không phải theo cả KB) — nếu container restart giữa chừng lúc đang ingest 1 file
-  lớn, lần sau chỉ ingest lại đúng file dở dang, không ingest lại từ đầu cả KB.
+**1 điểm vào duy nhất**: `POST /documents/upload/{kb_id}` hoặc `/upload-price/{kb_id}` → đẩy job
+vào RabbitMQ → `app/queue/consumer.py` xử lý nền. Đây cũng là cách 4 KB hệ thống (§3 README) có
+dữ liệu — không còn bước seed riêng lúc `on_startup` nữa; KB hệ thống hay KB user tự tạo đều đi
+qua đúng 1 pipeline này.
 
 ---
 

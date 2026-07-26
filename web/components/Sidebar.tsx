@@ -8,7 +8,8 @@ import { modelLabel } from "@/lib/models";
 import { useStore } from "@/lib/store";
 import { tf, useT } from "@/lib/i18n";
 import { useShell } from "./Shell";
-import { Book, Chart, Chat, Folder, Gear, Logout, Note, PanelLeft, Plus } from "./Icons";
+import { Book, Chart, Chat, Folder, Gear, Logout, Note, PanelLeft, Pin, Plus, Trash } from "./Icons";
+import type { Conversation } from "@/lib/types";
 
 export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
@@ -30,9 +31,56 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const activeProjectId = useStore((s) => s.activeProjectId);
   const setActiveKb = useStore((s) => s.setActiveKb);
   const setActiveProject = useStore((s) => s.setActiveProject);
+  const togglePinConversation = useStore((s) => s.togglePinConversation);
+  const removeConversation = useStore((s) => s.removeConversation);
   const model = useStore((s) => s.settings.model);
 
   const email = currentEmail();
+  const pinnedConvs = conversations.filter((c) => c.pinned);
+  const recentConvs = conversations.filter((c) => !c.pinned).slice(0, 12);
+
+  function deleteConversation(e: React.MouseEvent, id: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (confirm(t.nav.confirmDeleteConversation)) removeConversation(id);
+  }
+  function pinConversation(e: React.MouseEvent, id: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    togglePinConversation(id);
+  }
+
+  function ConvRow({ c }: { c: Conversation }) {
+    const on = pathname === `/chat/${c.id}`;
+    return (
+      <div className={`conv-item${on ? " on" : ""}`}>
+        <Link href={`/chat/${c.id}`} className="conv-row" onClick={onNavigate}>
+          <span className="t">{on ? "▸" : "·"}</span>
+          <span className="ellip">{c.title}</span>
+        </Link>
+        <div className="conv-actions">
+          <button
+            className={`msg-action-btn${c.pinned ? " active" : ""}`}
+            onClick={(e) => pinConversation(e, c.id)}
+            aria-label={c.pinned ? t.nav.unpinConversation : t.nav.pinConversation}
+            title={c.pinned ? t.nav.unpinConversation : t.nav.pinConversation}
+            type="button"
+          >
+            <Pin width={13} height={13} />
+          </button>
+          <button
+            className="msg-action-btn"
+            onClick={(e) => deleteConversation(e, c.id)}
+            aria-label={t.nav.deleteConversation}
+            title={t.nav.deleteConversation}
+            type="button"
+          >
+            <Trash width={13} height={13} />
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   function newChat() {
     router.push(`/chat/${crypto.randomUUID()}`);
@@ -131,19 +179,24 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           </div>
         )}
 
-        {conversations.length > 0 && (
+        {pinnedConvs.length > 0 && (
+          <div>
+            <div className="glabel">{t.nav.pinnedSection}</div>
+            <div className="side-list">
+              {pinnedConvs.map((c) => (
+                <ConvRow key={c.id} c={c} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {recentConvs.length > 0 && (
           <div>
             <div className="glabel">{t.nav.recent}</div>
             <div className="side-list">
-              {conversations.slice(0, 12).map((c) => {
-                const on = pathname === `/chat/${c.id}`;
-                return (
-                  <Link key={c.id} href={`/chat/${c.id}`} className={`conv-row${on ? " on" : ""}`} onClick={onNavigate}>
-                    <span className="t">{on ? "▸" : "·"}</span>
-                    <span className="ellip">{c.title}</span>
-                  </Link>
-                );
-              })}
+              {recentConvs.map((c) => (
+                <ConvRow key={c.id} c={c} />
+              ))}
             </div>
           </div>
         )}

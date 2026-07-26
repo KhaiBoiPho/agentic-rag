@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { streamSSE } from "@/lib/sse";
-import { useStore } from "@/lib/store";
+import { loadMessages, saveMessages, useStore } from "@/lib/store";
 import { useT } from "@/lib/i18n";
-import type { ChatMessage, ChatMode, ResearchStep } from "@/lib/types";
+import { isRagSource, type ChatMessage, type ChatMode, type ConversationHistoryResponse, type KB, type ResearchStep } from "@/lib/types";
 import TopBar from "../TopBar";
 import { Book, Globe } from "../Icons";
 import MessageBubble from "./MessageBubble";
@@ -15,9 +15,39 @@ import Composer, { type SendOpts } from "./Composer";
 // delivers deltas, so bursty SSE chunks don't make the text "pop" in clumps.
 const REVEAL_MS = 18;
 
+// Sentinel id for the synthetic "still working" placeholder shown while
+// catching up on a reply that finished generating after the user navigated
+// away (see the history-reconcile effect below).
+const CATCHUP_ID = "__catchup__";
+
+/** Reconstruct display messages from the server's persisted history. Fields
+ * that only ever existed transiently during a live stream (webMode, research
+ * steps, pendingForm, per-message pin) aren't recoverable and are left unset
+ * — see the backend endpoint's docstring for what is/isn't persisted. */
+function historyToMessages(resp: ConversationHistoryResponse, kbs: KB[], ragFallbackLabel: string): ChatMessage[] {
+  const kbName = resp.kb_id ? kbs.find((k) => k.id === resp.kb_id)?.name : undefined;
+  return resp.messages.map((m) => {
+    if (m.role === "user") {
+      return { id: m.id, role: "user", content: m.content };
+    }
+    const sources = m.sources ?? [];
+    const hasRag = sources.some(isRagSource);
+    return {
+      id: m.id,
+      role: "assistant",
+      content: m.content,
+      sources,
+      ragContext: hasRag ? { kind: "kb" as const, name: kbName ?? ragFallbackLabel } : null,
+    };
+  });
+}
+
 export default function ChatView({ conversationId }: { conversationId: string }) {
   const { t } = useT();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // Lazy initializer re-runs per mount — ChatView is remounted per
+  // conversation (key={id} in the route), so this correctly hydrates each
+  // conversation's own saved history instead of always starting empty.
+  const [messages, setMessages] = useState<ChatMessage[]>(() => loadMessages(conversationId));
   const [mode, setMode] = useState<ChatMode>("chat");
   const [speaking, setSpeaking] = useState(false);
 
@@ -50,6 +80,97 @@ export default function ChatView({ conversationId }: { conversationId: string })
       Object.values(tickers).forEach(clearInterval);
     };
   }, []);
+
+  // Persist this conversation's messages (debounced — typewriter ticks
+  // update `messages` up to ~55x/sec while streaming, so writing on every
+  // change would hammer localStorage; a short debounce coalesces that).
+  const saveMsgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (saveMsgTimer.current) clearTimeout(saveMsgTimer.current);
+    saveMsgTimer.current = setTimeout(() => saveMessages(conversationId, messages), 400);
+    return () => {
+      if (saveMsgTimer.current) clearTimeout(saveMsgTimer.current);
+    };
+  }, [messages, conversationId]);
+
+  // Reconcile with the server's persisted history on open — localStorage
+  // gives an instant (if possibly stale/device-local) first paint above,
+  // this fetch is the authoritative source and wins once it lands. A 404
+  // (brand-new conversation, nothing sent yet) or a network failure just
+  // leaves whatever local state is already showing.
+  //
+  // Navigating away mid-reply doesn't cancel the in-flight request (it's a
+  // plain fetch with no AbortController, and client-side routing doesn't
+  // unload the page) — the backend keeps generating and persists the reply
+  // when it finishes, but the ChatView instance that was watching it is
+  // long gone by then. If we land back on a conversation whose last turn is
+  // a user message with no reply yet, that's exactly this situation: show
+  // a "still working" placeholder and poll history until the reply lands
+  // (or give up after ~30s — the reply is still safely in Postgres and
+  // will show up next time the conversation is opened either way).
+  //
+  // Exception: an unsubmitted form (form_request) is the ONE case where
+  // "last turn is a user message with no reply" is completely normal, not
+  // interrupted — the backend only persists a construction_cost turn once
+  // the form is actually submitted (see app/api/v1/chat.py), so an
+  // in-progress form has no server-side counterpart at all. Reconciling
+  // against server history here would silently delete the form (and the
+  // catch-up poll above would then wait forever for a reply that was never
+  // going to come). The local cache is strictly more complete in this one
+  // case, so skip reconciliation entirely and keep it as-is.
+  useEffect(() => {
+    const cachedLast = loadMessages(conversationId).at(-1);
+    if (cachedLast?.role === "assistant" && cachedLast.pendingForm && !cachedLast.formSubmittedData) {
+      return;
+    }
+
+    let cancelled = false;
+    let pollTimer: ReturnType<typeof setTimeout> | null = null;
+
+    async function fetchHistory(): Promise<ConversationHistoryResponse | null> {
+      try {
+        const res = await apiFetch(`/api/v1/chat/history/${conversationId}`);
+        if (!res.ok) return null;
+        return (await res.json()) as ConversationHistoryResponse;
+      } catch {
+        return null;
+      }
+    }
+
+    function pollForReply(attempt: number) {
+      if (cancelled) return;
+      if (attempt >= 12) {
+        setMessages((m) => m.filter((x) => x.id !== CATCHUP_ID));
+        return;
+      }
+      pollTimer = setTimeout(async () => {
+        const data = await fetchHistory();
+        if (cancelled) return;
+        const last = data?.messages[data.messages.length - 1];
+        if (last?.role === "assistant") {
+          setMessages(historyToMessages(data!, useStore.getState().kbs, t.chat.historicalRag));
+          return;
+        }
+        pollForReply(attempt + 1);
+      }, 2500);
+    }
+
+    (async () => {
+      const data = await fetchHistory();
+      if (cancelled || !data || data.messages.length === 0) return;
+      setMessages(historyToMessages(data, useStore.getState().kbs, t.chat.historicalRag));
+      if (data.messages[data.messages.length - 1].role === "user") {
+        setMessages((m) => [...m, { id: CATCHUP_ID, role: "assistant", content: "", streaming: true }]);
+        pollForReply(0);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (pollTimer) clearTimeout(pollTimer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId]);
 
   const scrollDown = useCallback(() => {
     const el = threadRef.current;
@@ -146,8 +267,16 @@ export default function ChatView({ conversationId }: { conversationId: string })
       .join("\n");
   }
 
-  function registerConversation(title: string) {
-    upsertConversation({ id: conversationId, title: title.slice(0, 60), updated_at: Math.floor(Date.now() / 1000) });
+  // Bump the sidebar's "recent" ordering on every turn, not just the first
+  // — the title is only overwritten when explicitly given (new conversation),
+  // otherwise the existing stored title is preserved.
+  function touchConversation(title?: string) {
+    const existing = useStore.getState().conversations.find((c) => c.id === conversationId);
+    upsertConversation({
+      id: conversationId,
+      title: title ? title.slice(0, 60) : (existing?.title ?? conversationId),
+      updated_at: Math.floor(Date.now() / 1000),
+    });
   }
 
   // ── TTS ────────────────────────────────────────────────────────────────
@@ -200,6 +329,7 @@ export default function ChatView({ conversationId }: { conversationId: string })
       score_threshold: 0.5,
       mode: "rag",
       form_submission: opts.formSubmission ?? null,
+      via_voice: !!opts.viaVoice,
     };
     try {
       await streamSSE("/api/v1/chat/stream", body, (ev) => {
@@ -300,7 +430,7 @@ export default function ChatView({ conversationId }: { conversationId: string })
       setBusy(true);
       const isFirst = messages.length === 0;
       push({ id: crypto.randomUUID(), role: "user", content: text, viaVoice: opts?.viaVoice });
-      if (isFirst) registerConversation(text);
+      touchConversation(isFirst ? text : undefined);
       try {
         if (mode === "search") await streamSearch(text);
         else if (mode === "research") await streamResearch(text);
@@ -322,6 +452,7 @@ export default function ChatView({ conversationId }: { conversationId: string })
       // keep the form visible but locked, showing what was submitted —
       // rather than blanking the bubble out to an empty husk
       setMessages((m) => m.map((x) => (x.pendingForm && !x.formSubmittedData ? { ...x, formSubmittedData: data } : x)));
+      touchConversation();
       try {
         await streamChat({ formSubmission: { form_id: formId, data } });
       } finally {

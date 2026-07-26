@@ -18,7 +18,7 @@ A monolithic AI backend for a Vietnamese construction-materials domain assistant
 | **LLM / embeddings / vision** | OpenRouter (OpenAI-compatible), model per task set independently in `.env` | One API key, swappable models per task without code changes |
 | **Vector store** | Qdrant | Named-vector collection, batched upsert (200 pts/request — large PDFs otherwise hit `WriteTimeout`); dense-vector search only today despite a sparse (BM25) config also present — see `docs/kien-truc-he-thong.md` §16 |
 | **Relational store** | PostgreSQL 16 + SQLAlchemy (async, `asyncpg`) + Alembic | Users, KBs, documents, and **structured** material-price rows (`material_prices` table) — exact lookups, not vector search |
-| **Job queue** | RabbitMQ (`aio-pika`) | User-initiated document uploads only. System-KB seeding at startup bypasses the queue and calls the ingestion pipeline directly (no consumer round-trip needed for a background one-shot job) |
+| **Job queue** | RabbitMQ (`aio-pika`) | Every document upload, including into the 4 system KBs (§3) — one path, no separate startup-seeding job |
 | **STT** | `faster-whisper` (CTranslate2) running **PhoWhisper** (Vietnamese fine-tune), `STT_BACKEND=local` (in-process) or `http` (your own GPU box via tunnel — used for GPU-less hosts like Railway) | No external STT API dependency; PhoWhisper measurably beats plain Whisper on Vietnamese |
 | **TTS** | OpenAI's real `/v1/audio/speech` (`tts-1`), called directly — separate `OPENAI_API_KEY`, not via OpenRouter | OpenRouter has no genuine TTS endpoint; only "TTS-shaped" option there is a conversational audio-chat model, which can paraphrase instead of reading verbatim (see §2.3) |
 | **Tool calling / MCP** | Custom `Tool` + `handle_*` registry (`app/core/mcp/tools/`), OpenAI-style tool-calling loop (`app/core/llm/tool_loop.py`) | Price/quantity/cost math is deterministic Python, never LLM-computed — see §4 |
@@ -101,9 +101,7 @@ PDF/DOCX/TXT bytes
            structured store instead of relying on the vector search above
 ```
 
-**Two entry points, same pipeline:**
-- **User upload** — `POST /api/v1/documents/upload/{kb_id}` or `/upload-price/{kb_id}` → publishes a job to RabbitMQ → `app/queue/consumer.py` picks it up → same `IngestionPipeline`/`PriceExtractionPipeline` classes.
-- **System-KB seeding** — `app/core/bootstrap/seed.py`, run once as a background asyncio task at app startup (`app/main.py::on_startup`). Calls the pipelines **directly**, bypassing the queue (no consumer round-trip needed for a one-shot startup job). Idempotent **per file** (not per KB): each file's ingest status is tracked independently, so an interrupted seed (container restart mid-ingest) resumes only the unfinished files on next startup instead of restarting the whole batch or silently skipping it forever.
+**One entry point:** `POST /api/v1/documents/upload/{kb_id}` or `/upload-price/{kb_id}` → publishes a job to RabbitMQ → `app/queue/consumer.py` picks it up → `IngestionPipeline`/`PriceExtractionPipeline`. This is also how the 4 system KBs (§3) get populated — there is no separate startup-time seeding step; every KB, system or user-created, is filled the same way, through the normal upload UI.
 
 ### 2.3. Voice
 
@@ -150,12 +148,16 @@ TTS API, which only ever renders the given text — no conversational framing, n
 
 ## 3. Construction-materials domain layer
 
-The 2 system knowledge bases are seeded automatically at first startup from `seed_data/` (committed in-repo) and are **read-only** — no user can upload to, delete from, or modify them (`403` enforced in `app/api/v1/{documents,knowledge_base}.py`, checked against `app/core/bootstrap/constants.py::is_system_kb()`), so every deployment starts with the same knowledge base:
+4 fixed knowledge bases (`app/core/bootstrap/constants.py`) exist in every deployment — their **identity** is hardcoded (fixed UUIDs, name/description set by migration `0007_add_vendor_standards_kb.py`) but their **content is not auto-seeded**: each starts empty and is populated by manually uploading documents through the normal upload UI, exactly like a user-created KB. Only the KB shell itself is protected (`403` on `DELETE /api/v1/kb/{id}` for these 4, checked against `is_system_kb()`) — uploading into them, and deleting individual documents from them, is allowed for any authenticated user:
 
-| KB | Content | Source |
-|---|---|---|
-| **Kiến thức xây dựng** | Quantity-takeoff / cost-estimation methodology playbook, QCVN 16:2023, a materials reference book | `seed_data/knowledge/` (3 files) |
-| **Dự toán giá nhà** | Official Sở Xây dựng price-announcement PDFs (công văn + phụ lục) for Hà Nội, Đà Nẵng, TP.HCM, plus vendor quotes | `seed_data/prices/{HN,DN,HCM}/` |
+| KB | Purpose |
+|---|---|
+| **Dự toán giá nhà** | Official Sở Xây dựng price-announcement PDFs (công văn + phụ lục) — Hà Nội, Đà Nẵng, TP.HCM. National-average reference pricing for the cost-estimate flow (§4). **The only KB where `/upload-price/{kb_id}` (structured price-row extraction into `material_prices`) is allowed** — the other 3 reject that endpoint with 403 and only take the normal `/upload/{kb_id}` (RAG chunking, no structured extraction). |
+| **Báo giá doanh nghiệp** | Vendor/company price quotes from anywhere in the country — narrative RAG content, not structured extraction. |
+| **Kiến thức về VLXD cho kỹ sư** | Quantity-takeoff / cost-estimation methodology playbook, QCVN 16:2023, materials reference content for engineers. |
+| **Quy chuẩn & tiêu chuẩn xây dựng Việt Nam** | QCVN/TCVN — Vietnamese national construction codes and standards. |
+
+`seed_data/` still exists in-repo (the price/knowledge PDFs originally used to bootstrap these 4 KBs before this became a manual-upload flow) but nothing ingests it automatically anymore — there is no `app/core/bootstrap/seed.py` and no startup-time ingestion task. To populate a fresh deployment, upload real documents through the KB detail page in the UI (the "Dự toán giá nhà" page has extra Khu vực/Kỳ công bố fields that route to `/upload-price`; the other 3 use the plain uploader).
 
 Full pipeline detail, header-detection heuristics, and known data-quality caveats (a source PDF genuinely lacking a price category is reported honestly as "no data", not guessed): **[docs/construction-pricing-pipeline.md](docs/construction-pricing-pipeline.md)**.
 
@@ -219,7 +221,7 @@ bash scripts/setup.sh              # creates .env with random secrets
 docker compose up -d --build
 ```
 
-Services start in order: `postgres` → `migrate` → `qdrant` + `rabbitmq` → `app` → `ui`. On first start, `app` also seeds the 2 system knowledge bases from `seed_data/` in the background (§3) — see [docs/getting-started.md](docs/getting-started.md) for the full walkthrough, troubleshooting, and how to test each feature end-to-end.
+Services start in order: `postgres` → `migrate` → `qdrant` + `rabbitmq` → `app` → `ui`. The 4 system knowledge bases (§3) exist from the first `migrate` run but start **empty** — upload documents into them through the UI to populate. See [docs/getting-started.md](docs/getting-started.md) for the full walkthrough, troubleshooting, and how to test each feature end-to-end.
 
 | Service | URL |
 |---|---|
@@ -243,9 +245,9 @@ Verify a GPU load actually happened: `docker compose logs app | grep -i whisper`
 
 ---
 
-## 9. Moving to another machine without re-embedding
+## 9. Moving to another machine without re-uploading everything
 
-Re-running the full `seed_data/` ingestion (chunk → embed → extract) from scratch costs real time and OpenRouter API calls — the largest single source PDF alone (a 699-page Hà Nội price annex) takes several minutes just for embedding. To skip that on a new machine or after switching Docker engines, copy the two volumes that hold the already-processed result instead of re-seeding:
+Since KB content is only ever added by uploading through the UI (§3 — no automatic seeding), a fresh `docker compose up` on a new machine starts with all 4 system KBs (and any user KBs) **empty**. Re-uploading and re-ingesting (chunk → embed → extract) a large document set from scratch costs real time and OpenRouter API calls — the largest realistic source PDF (a several-hundred-page price annex) alone takes several minutes just for embedding. To avoid that on a new machine or after switching Docker engines, copy the two volumes that hold the already-processed result instead of re-uploading:
 
 ```bash
 # On the source machine (stack stopped, so nothing's mid-write):
@@ -268,7 +270,7 @@ docker run --rm -v agentic-rag_qdrant_data:/data -v "$(pwd)":/backup alpine \
 docker compose up -d
 ```
 
-`seed.py` checks per-file ingest status on startup — with the restored volumes in place it logs `already fully seeded — skipping` for both system KBs instead of re-ingesting anything. The `backups/` directory is gitignored (large binary dumps, regenerate locally rather than committing) — verify the exact volume name with `docker volume ls | grep -E "postgres_data|qdrant_data"` first if your Compose project directory isn't named `agentic-rag` (Compose derives the volume prefix from the directory name).
+With the volumes restored, the 4 system KBs (and any user KBs) come back exactly as they were — documents, chunks, and `material_prices` rows all live in Postgres/Qdrant, not in `seed_data/` or any other in-repo file, so there's nothing else to re-run. The `backups/` directory is gitignored (large binary dumps, regenerate locally rather than committing) — verify the exact volume name with `docker volume ls | grep -E "postgres_data|qdrant_data"` first if your Compose project directory isn't named `agentic-rag` (Compose derives the volume prefix from the directory name).
 
 ---
 
@@ -346,15 +348,15 @@ agentic-rag/
 │   │   ├── research/        # LangGraph research graph
 │   │   ├── voice/           # STT (local/http backends, PhoWhisper), TTS (OpenAI direct)
 │   │   ├── mcp/             # MCP server + tools (price_lookup, quantity, cost)
-│   │   ├── bootstrap/       # System-KB seeding (seed.py) + constants (system user/KB IDs)
+│   │   ├── bootstrap/       # Fixed system-KB IDs/names + is_system_kb() (constants.py) — see §3
 │   │   └── auth/            # JWT, OAuth, passwords
 │   ├── db/
 │   │   ├── postgres/        # SQLAlchemy models + repos (incl. material_prices)
 │   │   └── qdrant/          # Vector store client
 │   ├── queue/               # RabbitMQ publisher + consumer
 │   └── monitoring/          # Prometheus metrics + middleware
-├── frontend/                # Next.js 16 (App Router) + React 19 — single chat surface, see §5
-├── seed_data/                # Committed source files for the 2 system KBs (§3)
+├── web/                     # Next.js 15 (App Router) + React 19 — single chat surface, see §5
+├── seed_data/                # PDFs originally used to bootstrap the 4 system KBs — no longer auto-ingested, see §3
 ├── backups/                  # gitignored — local Postgres/Qdrant volume dumps (§9)
 ├── scripts/                  # setup.sh, one-off ingestion/dedup scripts used during development
 ├── migrations/               # Alembic migrations
@@ -377,8 +379,9 @@ Swagger UI at http://localhost:8000/docs (when `APP_DEBUG=true`).
 | `GET` | `/api/v1/auth/oauth/google` | Google OAuth2 |
 | `GET` | `/api/v1/auth/oauth/github` | GitHub OAuth2 |
 | `POST/GET` | `/api/v1/kb` | Create / list KBs (system KBs included, flagged `is_system: true`) |
-| `POST` | `/api/v1/documents/upload/{kb_id}` | Upload document to KB (403 on system KBs) |
-| `POST` | `/api/v1/documents/upload-price/{kb_id}` | Upload a material price-announcement PDF (`region`, `price_period` query params) — extracts structured rows into Postgres alongside normal RAG chunking, see [docs/construction-pricing-pipeline.md](docs/construction-pricing-pipeline.md) |
+| `DELETE` | `/api/v1/kb/{id}` | Delete a KB (403 on the 4 system KBs — only the shell is protected, see §3) |
+| `POST` | `/api/v1/documents/upload/{kb_id}` | Upload document to KB — allowed on any KB, including system KBs |
+| `POST` | `/api/v1/documents/upload-price/{kb_id}` | Upload a material price-announcement PDF (`region`, `price_period` query params) — extracts structured rows into Postgres alongside normal RAG chunking. Only allowed for the "Dự toán giá nhà" system KB (403 elsewhere) — see [docs/construction-pricing-pipeline.md](docs/construction-pricing-pipeline.md) |
 | `GET` | `/api/v1/documents/{kb_id}` | List documents in a KB |
 | `POST` | `/api/v1/chat/stream` | Streaming chat (SSE) — small talk / off-topic guard / fixed-intent form / agent tool-calling, in that order (§2.1). A message matching the fixed construction-cost intent returns a `form_request` event instead of an LLM answer; submit the filled form back via `form_submission` to run the tool directly, no detection re-run |
 | `POST` | `/api/v1/search` | Web search (Firecrawl) |

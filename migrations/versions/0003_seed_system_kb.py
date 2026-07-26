@@ -2,10 +2,10 @@
 
 Pure SQL insert, idempotent (ON CONFLICT DO NOTHING) — this is deliberately
 NOT where document ingestion happens: migrations run synchronously and
-shouldn't call async pipelines / OpenRouter over the network. The actual
-file ingestion (chunk/embed/extract into these KBs) runs as a background
-task on app startup — see app/core/bootstrap/seed.py, gated on
-document_count == 0 so it only does real work once.
+shouldn't call async pipelines / OpenRouter over the network. There is no
+automatic document ingestion anymore — every system KB (this migration's 2,
+plus 2 more added in 0007) is populated by manually uploading through the
+normal UI upload flow, same as any user KB.
 
 IDs here must match app/core/bootstrap/constants.py.
 

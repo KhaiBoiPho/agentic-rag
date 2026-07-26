@@ -153,6 +153,21 @@ export interface Conversation {
   id: string;
   title: string;
   updated_at: number;
+  pinned?: boolean;
+}
+
+// GET /api/v1/chat/history/{conversation_id}
+export interface HistoryMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  sources?: Source[] | null;
+  created_at: number;
+}
+export interface ConversationHistoryResponse {
+  conversation_id: string;
+  kb_id: string | null;
+  messages: HistoryMessage[];
 }
 
 export interface AppSettings {

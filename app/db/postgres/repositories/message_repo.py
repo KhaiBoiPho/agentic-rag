@@ -78,3 +78,29 @@ class MessageRepository:
             rows = list(result.all())
         # Pulled newest-first for the LIMIT; flip to chronological for the prompt.
         return [{"role": r, "content": c} for r, c in reversed(rows)]
+
+    async def get_conversation(self, conversation_id: str, user_id: str) -> Conversation | None:
+        """The conversation row if it exists and belongs to `user_id`, else None."""
+        async with get_session() as s:
+            conv = await s.get(Conversation, uuid.UUID(conversation_id))
+            if conv is None or str(conv.user_id) != user_id:
+                return None
+            return conv
+
+    async def get_all(self, conversation_id: str, user_id: str, limit: int = 200) -> list[Message] | None:
+        """Full message history for a conversation, chronological — the read
+        side of the write-only persistence `add()` was originally built for
+        (LLM context injection). Ownership-scoped: returns None if the
+        conversation doesn't exist or isn't this user's, so the API layer
+        can 404 without leaking whether the id exists for someone else."""
+        async with get_session() as s:
+            conv = await s.get(Conversation, uuid.UUID(conversation_id))
+            if conv is None or str(conv.user_id) != user_id:
+                return None
+            result = await s.execute(
+                select(Message)
+                .where(Message.conversation_id == uuid.UUID(conversation_id))
+                .order_by(Message.created_at.asc())
+                .limit(limit)
+            )
+            return list(result.scalars().all())

@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from app.api.deps import CurrentUser
 from app.config import settings
-from app.core.bootstrap.constants import is_system_kb
+from app.core.bootstrap.constants import KB_PRICING_ID, is_system_kb
 from app.queue.publisher import publish_ingest_job
 
 router = APIRouter()
@@ -30,10 +30,6 @@ async def upload_document(
     chunk_overlap_pct: int = Query(default=None),
     table_context_size: int = Query(default=None),
 ):
-    if is_system_kb(kb_id):
-        raise HTTPException(
-            403, "This knowledge base is system-managed (read-only) — uploads are not allowed"
-        )
     if file.size and file.size > MAX_FILE_MB * 1024 * 1024:
         raise HTTPException(400, f"File exceeds {MAX_FILE_MB}MB limit")
 
@@ -87,10 +83,16 @@ async def upload_price_document(
 ):
     """Upload a price-announcement công văn/phụ lục or vendor-quote PDF: runs
     both the normal RAG chunking and structured price-row extraction into
-    material_prices (see PriceExtractionPipeline)."""
-    if is_system_kb(kb_id):
+    material_prices (see PriceExtractionPipeline).
+
+    Structured price extraction is reserved for the "Dự toán giá nhà" system
+    KB — the other 3 system KBs (and all user KBs) are narrative/RAG-only
+    content, not meant to feed material_prices."""
+    if is_system_kb(kb_id) and kb_id != KB_PRICING_ID:
         raise HTTPException(
-            403, "This knowledge base is system-managed (read-only) — uploads are not allowed"
+            403,
+            'Chỉ Kho tri thức "Dự toán giá nhà" mới dùng upload trích xuất giá có cấu trúc — '
+            "dùng upload thường cho kho tri thức này",
         )
     if file.size and file.size > MAX_FILE_MB * 1024 * 1024:
         raise HTTPException(400, f"File exceeds {MAX_FILE_MB}MB limit")
@@ -117,9 +119,18 @@ async def delete_document(document_id: str, current_user: CurrentUser):
     doc = await repo.get_by_id(document_id, str(current_user.id))
     if not doc:
         raise HTTPException(404, "Document not found")
-    if is_system_kb(str(doc.kb_id)):
+    # Ownership scopes deletion to whichever user uploaded it (including for
+    # documents inside a system KB — see is_system_kb's docstring) — EXCEPT
+    # the pricing KB, which is hard-locked regardless of uploader: its
+    # documents feed material_prices, the deterministic cost-estimate tool's
+    # only real data source (§4 README) — deleting one out from under a live
+    # tool call is a correctness risk the other 3 (RAG-only) system KBs
+    # don't carry, so this one rule is unconditional rather than ownership-based.
+    if str(doc.kb_id) == KB_PRICING_ID:
         raise HTTPException(
-            403, "This document belongs to a system-managed knowledge base and cannot be deleted"
+            403,
+            'Tài liệu trong Kho tri thức "Dự toán giá nhà" không thể xoá — '
+            "dữ liệu giá có cấu trúc trích từ đây được dùng trực tiếp cho tính năng dự toán chi phí",
         )
     await qdrant.delete_by_document(document_id)
     await repo.delete(document_id, str(current_user.id))

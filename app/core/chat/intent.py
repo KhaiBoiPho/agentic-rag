@@ -55,6 +55,19 @@ FORM_SCHEMAS: dict[str, dict] = {
                     {"value": "hoan_thien_cao_cap", "label": "Hoàn thiện cao cấp"},
                 ],
             },
+            {
+                # Optional — most cost questions don't state a budget. When
+                # one is given (typed or prefilled from the message), the
+                # form path reverse-derives an achievable area from it and
+                # has the presentation step address the actual question
+                # ("what fits my budget") instead of only echoing a direct
+                # estimate for whatever area was typed — see cost_tool.py's
+                # build_cost_facts(target_budget=...).
+                "name": "target_budget_vnd",
+                "label": "Ngân sách mục tiêu (VNĐ, tuỳ chọn)",
+                "type": "number",
+                "required": False,
+            },
         ],
     },
 }
@@ -69,7 +82,12 @@ FORM_SCHEMAS: dict[str, dict] = {
 _INTENT_WORD_GROUPS: dict[str, list[list[str]]] = {
     "construction_cost": [
         ["nhà"],
-        ["xây", "xây dựng", "thi công", "làm nhà"],
+        # "dự toán" on its own already means "construction cost estimate" in
+        # this domain — requiring a separate xây/build word alongside it
+        # missed the very natural "dự toán giá nhà 100m2" phrasing (no "xây"
+        # anywhere in it) despite "dự toán" + "nhà" + an area being about as
+        # unambiguous a request as this intent gets.
+        ["xây", "xây dựng", "thi công", "làm nhà", "dự toán"],
         ["giá", "chi phí", "bao nhiêu tiền", "tốn bao nhiêu", "hết bao nhiêu", "dự toán"],
     ],
 }
@@ -223,6 +241,18 @@ def detect_small_talk(message: str) -> str | None:
 
 _AREA_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*m\s*2", re.IGNORECASE)
 
+# Vietnamese budget shorthand — "khoảng 200 triệu", "ngân sách 1.5 tỷ", "500tr".
+# "tr" only matches as a standalone unit (word boundary), not as a substring
+# of "trước"/"trong"/etc.
+_BUDGET_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*(tỷ|ty|triệu|trieu|tr\b)", re.IGNORECASE)
+_BUDGET_MULTIPLIER = {
+    "tỷ": 1_000_000_000,
+    "ty": 1_000_000_000,
+    "triệu": 1_000_000,
+    "trieu": 1_000_000,
+    "tr": 1_000_000,
+}
+
 _REGION_KEYWORDS: list[tuple[str, list[str]]] = [
     ("HN", ["hà nội", "ha noi", " hn "]),
     ("DN", ["đà nẵng", "da nang", " dn "]),
@@ -253,5 +283,11 @@ def prefill_from_text(message: str) -> dict:
         if any(kw in text for kw in keywords):
             prefill["region"] = region
             break
+
+    budget_match = _BUDGET_RE.search(text)
+    if budget_match:
+        amount = float(budget_match.group(1).replace(",", "."))
+        unit = budget_match.group(2).lower()
+        prefill["target_budget_vnd"] = amount * _BUDGET_MULTIPLIER[unit]
 
     return prefill

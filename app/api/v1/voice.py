@@ -1,4 +1,4 @@
-"""Voice endpoints — STT (local Whisper) + TTS (OpenRouter) streaming."""
+"""Voice endpoints — STT (local PhoWhisper) + TTS (OpenAI, direct) streaming."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ class TTSRequest(BaseModel):
 
 @router.post("/tts/stream")
 async def tts_stream(body: TTSRequest, current_user: CurrentUser):
-    """Stream TTS audio bytes (MP3) via OpenRouter."""
+    """Stream TTS audio bytes (MP3) via OpenAI's real /audio/speech endpoint."""
 
     async def audio_gen():
         async for chunk in _tts.stream(text=body.text, voice=body.voice):

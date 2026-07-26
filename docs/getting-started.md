@@ -45,7 +45,7 @@ OpenRouter thỉnh thoảng gỡ/đổi tên model (kể cả model trả phí, 
 docker compose up -d --build
 ```
 
-Thứ tự khởi động: `postgres` → `migrate` (chạy `alembic upgrade head`, tạo schema + 2 KB hệ thống rỗng) → `qdrant`/`rabbitmq` → `app` → `ui`.
+Thứ tự khởi động: `postgres` → `migrate` (chạy `alembic upgrade head`, tạo schema + 4 KB hệ thống rỗng) → `qdrant`/`rabbitmq` → `app` → `ui`.
 
 | Service | URL |
 |---|---|
@@ -75,36 +75,39 @@ Nếu `docker compose logs app` không in gì dù container đã chạy được
 
 ---
 
-## 5. Dữ liệu có sẵn (seed) — tự động, chạy ngầm
+## 5. 4 kho tri thức hệ thống — cố định nhưng trống, tự upload để có dữ liệu
 
-Ngay khi container `app` khởi động lần đầu, nó tự ingest **2 knowledge base hệ thống** từ `seed_data/` (đã commit sẵn trong repo, không cần upload tay):
+`migrate` tạo sẵn 4 knowledge base hệ thống (ID/tên cố định trong
+`app/core/bootstrap/constants.py`), nhưng **không tự ingest gì cả** — mỗi
+lần deploy mới, cả 4 đều trống cho tới khi bạn tải tài liệu lên qua UI
+(giống hệt cách upload vào 1 KB do user tự tạo):
 
-| KB | Nội dung | Nguồn | Số file |
-|---|---|---|---|
-| **Kiến thức xây dựng** | Playbook đo bóc/ước lượng, QCVN 16:2023, sách vật liệu xây dựng | `seed_data/knowledge/` | 3 |
-| **Dự toán giá nhà** | Công văn/phụ lục công bố giá + báo giá nhà cung cấp cho 3 vùng HN, Đà Nẵng, TPHCM | `seed_data/prices/{HN,DN,HCM}/` | 10 |
+| KB | Dùng cho | Cách upload |
+|---|---|---|
+| **Dự toán giá nhà** | Công văn/phụ lục giá VLXD chính thức (HN/ĐN/HCM), báo giá trung bình toàn quốc | Trang chi tiết KB này có thêm 2 field **Khu vực** + **Kỳ công bố**, gọi `/upload-price` — trích thêm dữ liệu giá có cấu trúc vào `material_prices` (dùng cho tính năng dự toán chi phí) |
+| **Báo giá doanh nghiệp** | Báo giá VLXD của doanh nghiệp trên toàn quốc | Upload thường |
+| **Kiến thức về VLXD cho kỹ sư** | Playbook đo bóc/ước lượng, QCVN 16:2023 | Upload thường |
+| **Quy chuẩn & tiêu chuẩn xây dựng Việt Nam** | QCVN/TCVN nhà nước quy định | Upload thường |
 
-(Số file ít hơn phiên bản đầu — ~60 file báo giá scan của từng nhà cung cấp riêng lẻ ở TPHCM đã bị loại bỏ vì không đọc được text/OCR không đáng tin; chỉ giữ lại các công văn/phụ lục chính thức và báo giá đọc được rõ ràng, đặt tên lại dễ hiểu thay vì "PL1"/"Phụ lục 1".)
+Chỉ **"Dự toán giá nhà"** mới nhận `/upload-price` — 3 KB còn lại (và mọi KB
+do user tạo) sẽ bị `403` nếu gọi endpoint đó, phải dùng `/upload` thường.
 
-Đây là quá trình **chunk + embed qua OpenRouter + trích xuất giá vào Postgres** — mất vài phút (file lớn nhất, phụ lục Hà Nội 699 trang, riêng nó đã mất ~10 phút để embed), chạy nền không chặn app (`/health` trả 200 ngay). Theo dõi tiến độ:
+Theo dõi tiến độ ingest (giống bất kỳ upload nào — xem trạng thái tại
+`GET /api/v1/documents/{kb_id}` hoặc trang chi tiết KB trên UI):
 
 ```bash
 docker compose exec postgres psql -U agentic -d agentic_rag \
   -c "select name, document_count from knowledge_bases where user_id='00000000-0000-0000-0000-000000000001';"
 ```
 
-`document_count` của "Kiến thức xây dựng" dừng ở 3 và "Dự toán giá nhà" dừng ở 10 là đã xong. Chi tiết hơn theo từng file:
+4 KB này **chỉ có phần "shell" là không xoá được** (`DELETE /api/v1/kb/{id}`
+trả `403` cho 4 ID cố định này, chặn ở `app/api/v1/knowledge_base.py`) — tải
+tài liệu lên và xoá từng tài liệu bên trong vẫn hoạt động bình thường như
+KB thường, không có `403` nào ở `app/api/v1/documents.py` cho việc đó.
 
-```bash
-docker compose exec postgres psql -U agentic -d agentic_rag \
-  -c "select filename, status, chunk_count from documents where kb_id in ('00000000-0000-0000-0000-000000000101','00000000-0000-0000-0000-000000000102') order by created_at;"
-```
-
-Nếu thiếu `OPENROUTER_API_KEY` hoặc key sai, bước này sẽ log lỗi (xem `docker compose logs app`) nhưng **không làm crash app** — sửa `.env` rồi `docker compose up -d --force-recreate --no-deps app` để seed lại (idempotent theo từng file — chỉ file chưa `status=done` mới bị ingest lại, xem `app/core/bootstrap/seed.py`).
-
-2 KB này **không thể xoá/sửa/upload thêm** qua API (chặn cứng ở `app/api/v1/documents.py` và `app/api/v1/knowledge_base.py`, trả về `403`) — đảm bảo mọi lần deploy đều có cùng bộ kiến thức nền.
-
-**Chuyển máy/deploy lại mà không muốn embed lại từ đầu**: xem [README.md §9](../README.md#9-moving-to-another-machine-without-re-embedding) — backup 2 volume Postgres/Qdrant và restore ở máy mới thay vì để seed chạy lại.
+**Chuyển máy/deploy lại mà không muốn upload lại từ đầu**: xem
+[README.md §9](../README.md#9-moving-to-another-machine-without-re-uploading-everything)
+— backup 2 volume Postgres/Qdrant và restore ở máy mới.
 
 ---
 

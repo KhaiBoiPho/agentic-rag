@@ -78,8 +78,21 @@ RABBITMQ_URL=amqp://<user>:<pass>@rabbitmq.railway.internal:5672/
 OPENROUTER_API_KEY=<your key>
 FIRECRAWL_API_KEY=<your key>
 
-# GPU is not available on standard Railway plans — must be cpu, otherwise
-# faster-whisper fails to init CUDA at startup and the service crash-loops.
+# TTS only (real OpenAI /audio/speech — OpenRouter has no such endpoint).
+OPENAI_API_KEY=<your key>
+OPENAI_TTS_BASE_URL=https://api.openai.com/v1
+OPENAI_TTS_MODEL=tts-1
+
+# STT — PhoWhisper (VinAI's Vietnamese Whisper fine-tune), not OpenAI.
+# "local" runs it in-process on CPU; GPU is not available on standard
+# Railway plans, so WHISPER_DEVICE must stay cpu (cuda crash-loops the
+# service at startup trying to init CUDA that doesn't exist here).
+# phowhisper-medium is the accuracy/latency tradeoff that's usable on CPU;
+# phowhisper-large is more accurate but noticeably slower without a GPU.
+# If you need GPU-speed PhoWhisper on Railway, run local-gpu-stt/ on your
+# own GPU box instead and switch STT_BACKEND=http + STT_HTTP_URL/SECRET.
+STT_BACKEND=local
+WHISPER_MODEL_SIZE=phowhisper-medium
 WHISPER_DEVICE=cpu
 WHISPER_COMPUTE_TYPE=int8
 
@@ -106,7 +119,65 @@ railway run --service backend alembic upgrade head
 Re-run this after every deploy that includes new migrations (there's no
 automatic pre-deploy hook on Railway without a paid add-on/custom script).
 
-## 6. Frontend (`ui`)
+`alembic upgrade head` on a brand-new Railway Postgres runs all 7 migrations
+in order:
+
+| Migration | What it does |
+|---|---|
+| `0001_initial_schema` | Core tables — users, knowledge_bases, documents, conversations, messages, etc. |
+| `0002_material_prices` | Creates the `material_prices` table (structured price lookups) — **empty**, no rows inserted. |
+| `0003_seed_system_kb` | Inserts the system user row + the first 2 system KBs ("Kiến thức về VLXD cho kỹ sư", "Dự toán giá nhà") — rows only, `document_count = 0`. |
+| `0004_notes_projects` | Notes + Projects tables. |
+| `0005_usage_records` | Usage/token-tracking table. |
+| `0006_messages_recent_index` | Index for the recent-messages query path (performance only, no data change). |
+| `0007_add_vendor_standards_kb` | Renames the 2 KBs from 0003 to their current names/descriptions, and inserts the remaining 2 ("Báo giá doanh nghiệp", "Quy chuẩn & tiêu chuẩn xây dựng Việt Nam"). |
+
+### What you have right after migrating — and what you don't
+
+The 4 system knowledge bases exist as empty shells (their ids are hardcoded
+in `app/core/bootstrap/constants.py` and referenced by the app, so they must
+exist — that's what 0003+0007 guarantee) but contain **zero documents** and
+`material_prices` has **zero rows**. There is no automatic seed-data
+ingestion anymore (`app/core/bootstrap/seed.py` was removed) — getting this
+fresh deploy to the same working state as an existing environment means
+manually uploading documents through the normal UI, once, after first
+deploy:
+
+- **"Dự toán giá nhà"** — upload your price-list PDF(s) via that KB's page
+  using the special "trích giá có cấu trúc" flow (calls `POST
+  /api/v1/documents/upload-price`, the only KB this endpoint accepts). This
+  is what actually populates `material_prices` — see §6 below.
+- The other 3 system KBs, and any user/project KBs — upload via the normal
+  document-upload flow (chunk + embed into Qdrant), no different from a
+  user creating their own KB.
+
+**Cost-estimation without `material_prices` populated:** the
+`/api/v1/chat/stream` construction-cost tool doesn't crash or hang on a
+missing price — for each material it (1) looks up `material_prices`, (2)
+falls back to a live web-price search if that's empty, then (3) if even
+that fails, renders an honest "_không có dữ liệu_" line for that item
+instead of guessing a number. So a fresh Railway deploy is functional
+immediately, just with lower-quality/no pricing until someone uploads the
+real price list — it will never fabricate a number in place of missing
+data.
+
+## 6. Price extraction — what makes a document `material_prices` rows
+
+Only PDFs uploaded through **`POST /api/v1/documents/upload-price`** (kb_id
+must be the pricing KB — enforced server-side) go through structured
+table/price extraction into `material_prices`; every other upload path only
+chunks + embeds into Qdrant for RAG. Plain text files, scans without a
+extractable table, or non-PDFs will fail that endpoint (`'No /Root object!
+— Is this really a PDF?'` for non-PDFs is expected, not a bug) — it needs a
+real PDF with a parseable price table (PyMuPDF/pdfplumber-extractable).
+
+Uploading a long document does not overload the pipeline — extraction runs
+as a queued background job (RabbitMQ), page-by-page/table-by-table, the
+same as normal document chunking; a longer PDF just takes proportionally
+longer in the background, it doesn't block the request or run synchronously
+in the API process.
+
+## 7. Frontend (`ui`)
 
 New service from this GitHub repo, **root directory `web`**. Environment
 variables:
@@ -142,14 +213,15 @@ into the backend's `CORS_ORIGINS`.
 - [ ] `API_PROXY_TARGET` on the frontend points at the backend's **internal** Railway domain (`*.railway.internal`), not its public one — avoids an unnecessary public round-trip and works even if the backend has no public domain
 - [ ] Ran `alembic upgrade head` against the Railway Postgres before the first request
 - [ ] Qdrant and RabbitMQ each have a persistent volume attached (otherwise data disappears on every redeploy)
-- [ ] `OPENROUTER_API_KEY` / `FIRECRAWL_API_KEY` set on the backend service
+- [ ] `OPENROUTER_API_KEY` / `FIRECRAWL_API_KEY` / `OPENAI_API_KEY` set on the backend service
+- [ ] Uploaded a price-list PDF via `upload-price` into "Dự toán giá nhà" so `material_prices` isn't empty (optional — cost estimation degrades gracefully without it, see §5, but pricing quality is much better with it)
 - [ ] SSE still streams (not buffered) — Railway's edge proxy passes through `Cache-Control: no-transform`/chunked responses fine, but verify after first deploy by watching a `/api/v1/chat/stream` response arrive token-by-token rather than all at once
 
 ## Troubleshooting
 
 **Frontend deploy log shows an old Next.js version / `agentic-rag-frontend` as
 the package name:** the service's root directory is still `frontend` — see
-the migration note in §6.
+the migration note in §7.
 
 **`Failed to proxy http://<backend>.railway.internal:PORT/...` /
 `ECONNREFUSED` in the frontend logs:** the frontend container itself is fine

@@ -70,16 +70,22 @@ class Settings(BaseSettings):
     # ─── OpenAI (TTS only — direct, not via OpenRouter) ───────────────────────
     # OpenRouter has no genuine /audio/speech endpoint (see
     # app/core/voice/openai_tts.py) — real TTS needs an actual OpenAI key.
+    # STT stays on PhoWhisper (below), not OpenAI — a different model choice
+    # for a different reason (Vietnamese-tuned accuracy, no per-request cost).
     openai_api_key: str = ""
     openai_tts_base_url: str = "https://api.openai.com/v1"
     openai_tts_model: str = "tts-1"
 
     # ─── STT ─────────────────────────────────────────────────────────────────
-    # "local" loads faster-whisper in-process (needs a CUDA host for anything
-    # bigger than "base" at usable latency). "http" calls a plain HTTP server
-    # you run yourself on a GPU box (see local-gpu-stt/), tunneled in via
-    # ngrok or similar — the way to get GPU Whisper on a host with no GPU of
-    # its own (e.g. Railway), no cold start, but the box has to be on.
+    # "local" loads faster-whisper in-process, running PhoWhisper (VinAI's
+    # Vietnamese Whisper fine-tune, see app/core/voice/phowhisper.py) —
+    # needs a CUDA host for anything bigger than "base"/"small" at usable
+    # latency, but has no external dependency to keep alive. "http" calls a
+    # plain HTTP server you run yourself on a GPU box (see local-gpu-stt/),
+    # tunneled in via ngrok or similar — the way to get GPU PhoWhisper on a
+    # host with no GPU of its own (e.g. Railway), no cold start, but the box
+    # and the tunnel both have to stay up (a real failure mode mid-demo if
+    # either drops).
     stt_backend: Literal["local", "http"] = "local"
 
     whisper_model_size: str = "base"
