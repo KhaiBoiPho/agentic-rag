@@ -22,6 +22,18 @@ export const Chat = (p: P) => (
     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
   </svg>
 );
+// Chatbot mark — a friendly robot head (antenna + rounded head + two eyes).
+// Uses currentColor so it inverts with the theme wherever it's placed.
+export const Bot = (p: P) => (
+  <svg {...base} {...p}>
+    <path d="M12 4.2v3.3" />
+    <circle cx="12" cy="3.2" r="1.15" />
+    <rect x="4" y="7.5" width="16" height="11" rx="3.6" />
+    <path d="M2 12.5v2.4M22 12.5v2.4" />
+    <circle cx="9" cy="12.9" r="1.15" fill="currentColor" stroke="none" />
+    <circle cx="15" cy="12.9" r="1.15" fill="currentColor" stroke="none" />
+  </svg>
+);
 export const Note = (p: P) => (
   <svg {...base} {...p}>
     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />

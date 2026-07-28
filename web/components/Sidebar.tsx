@@ -8,7 +8,7 @@ import { modelLabel } from "@/lib/models";
 import { useStore } from "@/lib/store";
 import { tf, useT } from "@/lib/i18n";
 import { useShell } from "./Shell";
-import { Book, Chart, Chat, Folder, Gear, Logout, Note, PanelLeft, Pin, Plus, Trash } from "./Icons";
+import { Book, Bot, Chart, Chat, Folder, Gear, Logout, Note, PanelLeft, Pin, Plus, Trash } from "./Icons";
 import type { Conversation } from "@/lib/types";
 
 export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
@@ -102,7 +102,7 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     <aside className={`side${collapsed ? " collapsed" : ""}`}>
       <div className="side-brand">
         <span className="mark">
-          <Book stroke="#fff" strokeWidth={1.6} />
+          <Bot strokeWidth={1.6} />
         </span>
         <span className="nm lbl-text">
           C<span className="accent">ố</span>t

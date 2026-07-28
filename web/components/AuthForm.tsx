@@ -7,7 +7,7 @@ import { api } from "@/lib/api";
 import { setTokens } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
 import type { TokenResponse } from "@/lib/types";
-import { Logo } from "./Icons";
+import { Bot } from "./Icons";
 import LanguageToggle from "./LanguageToggle";
 import ThemeToggle from "./ThemeToggle";
 
@@ -50,7 +50,7 @@ export default function AuthForm({ mode }: { mode: "login" | "register" }) {
         <span className="m tl" /><span className="m tr" /><span className="m bl" /><span className="m br" />
         <div className="auth-brand">
           <span className="mark">
-            <Logo stroke="#fff" />
+            <Bot />
           </span>
           <span className="nm">
             C<span className="accent">ố</span>t

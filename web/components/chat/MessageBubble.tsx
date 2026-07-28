@@ -3,7 +3,7 @@
 import { memo } from "react";
 import { useT } from "@/lib/i18n";
 import { isRagSource, isWebSource, type ChatMessage, type RagSource, type WebSource } from "@/lib/types";
-import { Book, Globe, Mic, Pin, Trash, Warn } from "../Icons";
+import { Book, Bot, Globe, Mic, Pin, Trash, Warn } from "../Icons";
 import Markdown from "./Markdown";
 import ResearchPanel from "./ResearchPanel";
 import CostForm from "./CostForm";
@@ -70,7 +70,7 @@ function MessageBubbleImpl({ msg, onSubmitForm, onTogglePin, onDelete }: Props) 
 
   return (
     <div className={`msg assistant${msg.pinned ? " pinned" : ""}`}>
-      <span className="g">Cố</span>
+      <span className="g" title="Cốt"><Bot width={17} height={17} /></span>
       <div className="msg-col">
         {isThinking ? (
           <div className="thinking-row" aria-live="polite" aria-label={t.chat.thinking}>

@@ -7,7 +7,7 @@ import { loadMessages, saveMessages, useStore } from "@/lib/store";
 import { useT } from "@/lib/i18n";
 import { isRagSource, type ChatMessage, type ChatMode, type ConversationHistoryResponse, type KB, type ResearchStep } from "@/lib/types";
 import TopBar from "../TopBar";
-import { Book, Globe } from "../Icons";
+import { Book, Bot, Globe } from "../Icons";
 import MessageBubble from "./MessageBubble";
 import Composer, { type SendOpts } from "./Composer";
 
@@ -500,7 +500,7 @@ export default function ChatView({ conversationId }: { conversationId: string })
         {messages.length === 0 ? (
           <div className="welcome">
             <span className="mark">
-              <Book stroke="#fff" strokeWidth={1.6} />
+              <Bot strokeWidth={1.6} />
             </span>
             <h2>{t.chat.welcomeTitle}</h2>
             <p>{t.chat.welcomeBody}</p>
