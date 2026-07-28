@@ -149,7 +149,7 @@ const vi = {
     region: "Khu vực",
     pricePeriod: "Kỳ công bố",
     pricePeriodPh: "vd 2026-06 (tuỳ chọn)",
-    priceUploadNote: "Tài liệu tải vào đây được trích xuất thêm dữ liệu giá có cấu trúc để dùng cho tính năng dự toán chi phí — vì vậy không thể xoá sau khi đã tải lên.",
+    priceUploadNote: "Tài liệu tải vào đây được trích xuất thêm dữ liệu giá có cấu trúc để dùng cho tính năng dự toán chi phí. Khi xoá tài liệu, dữ liệu giá trích từ nó cũng bị xoá theo.",
   },
   notes: {
     title: "Ghi chú",
@@ -398,7 +398,7 @@ const en = {
     region: "Region",
     pricePeriod: "Price period",
     pricePeriodPh: "e.g. 2026-06 (optional)",
-    priceUploadNote: "Documents uploaded here also get structured price data extracted for the cost-estimate feature — so they can't be deleted afterward.",
+    priceUploadNote: "Documents uploaded here also get structured price data extracted for the cost-estimate feature. Deleting a document also removes the price data extracted from it.",
   },
   notes: {
     title: "Notes",

@@ -155,11 +155,9 @@ export default function KbDetail({ params }: { params: Promise<{ id: string }> }
                   </span>
                   <span className="chunks">{tf(t.kb.chunkCount, { n: d.chunk_count })}</span>
                   <span className="chunks">{ago(d.created_at)}</span>
-                  {!isPricingKb && (
-                    <button className="icon-x" onClick={() => remove(d.id)} aria-label={t.common.delete}>
-                      ✕
-                    </button>
-                  )}
+                  <button className="icon-x" onClick={() => remove(d.id)} aria-label={t.common.delete}>
+                    ✕
+                  </button>
                 </div>
               ))}
             </div>

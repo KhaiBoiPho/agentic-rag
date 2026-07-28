@@ -17,6 +17,12 @@ class RetrievedChunk:
     score: float
     page_num: int
     chunk_type: str
+    # Domain metadata carried on price chunks (see price_pipeline.py) — needed
+    # so the chat layer can tell the LLM which region a price chunk is for,
+    # otherwise it can present e.g. a Đà Nẵng price as if it were the Cần Thơ
+    # price the user asked about.
+    region: str = ""
+    price_period: str = ""
 
 
 class Retriever:
@@ -51,6 +57,7 @@ class Retriever:
         results: list[RetrievedChunk] = []
         for pt in scored_points:
             p = pt.payload or {}
+            meta = p.get("metadata") or {}
             results.append(
                 RetrievedChunk(
                     chunk_id=str(pt.id),
@@ -60,6 +67,8 @@ class Retriever:
                     score=pt.score,
                     page_num=p.get("page_num", 0),
                     chunk_type=p.get("chunk_type", "text"),
+                    region=meta.get("region", ""),
+                    price_period=meta.get("price_period", ""),
                 )
             )
         return results

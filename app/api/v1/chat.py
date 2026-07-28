@@ -12,7 +12,15 @@ from pydantic import BaseModel
 
 from app.api.deps import SSE_HEADERS, CurrentUser
 from app.api.v1.config import load_skill_prompt
-from app.core.chat.intent import FORM_SCHEMAS, detect_intent, detect_small_talk, prefill_from_text
+from app.core.bootstrap.constants import KB_PRICING_ID
+from app.core.chat.followup import condense_followup
+from app.core.chat.intent import (
+    FORM_SCHEMAS,
+    detect_intent,
+    detect_regions,
+    detect_small_talk,
+    prefill_from_text,
+)
 from app.core.chat.topic_guard import is_off_topic, refusal_reply
 from app.core.chunking.base import count_tokens
 from app.core.llm.openrouter import OpenRouterClient
@@ -62,6 +70,34 @@ vật liệu xây dựng phổ biến (có thể nêu tên sản phẩm hẹp đ
 giá), rồi hỏi ngay người dùng muốn xem giá loại vật liệu phổ biến nào \
 (thép, xi măng, gạch, sơn, cát, đá...) để tra đúng.
 
+QUAN TRỌNG — KHỚP ĐÚNG KHU VỰC: Mỗi đoạn dữ liệu giá ở trên được gắn nhãn \
+khu vực (vd "khu vực: Đà Nẵng"). Hệ thống CHỈ có dữ liệu giá cho Hà Nội, \
+Đà Nẵng và TPHCM. Khi người dùng hỏi giá ở một khu vực CỤ THỂ, chỉ được \
+dùng con số của ĐÚNG khu vực đó. Nếu người dùng hỏi giá ở khu vực KHÔNG có \
+trong dữ liệu (vd Cần Thơ, Hải Phòng, Huế...), TUYỆT ĐỐI KHÔNG lấy giá của \
+một khu vực khác (Hà Nội/Đà Nẵng/TPHCM) trả lời như thể đó là giá của khu \
+vực được hỏi. Hãy nói thẳng: hiện chỉ có dữ liệu giá cho Hà Nội, Đà Nẵng, \
+TPHCM — chưa có cho khu vực đó, và hỏi người dùng có muốn xem giá ở một \
+trong ba khu vực này không.
+
+QUAN TRỌNG — ưu tiên dữ liệu được cung cấp: Khi có đoạn dữ liệu (Context) \
+ở trên liên quan tới câu hỏi, hãy trả lời DỰA TRÊN dữ liệu đó và có thể nêu \
+nguồn — đừng bỏ qua dữ liệu thật để trả lời hoàn toàn bằng kiến thức chung \
+chung.
+
+QUAN TRỌNG — câu hỏi tiếp nối: Với câu hỏi ngắn dạng tiếp nối (vd "còn ở Đà \
+Nẵng thì sao?", "loại kia thì sao?", "thế còn D10?"), hãy suy ra chủ đề/vật \
+liệu đang nói tới TỪ LƯỢT HỎI TRƯỚC trong lịch sử hội thoại — đừng hỏi lại \
+"bạn muốn hỏi về vật liệu nào" khi lượt trước đã nói rõ (vd đang hỏi giá \
+thép thì "còn Đà Nẵng?" nghĩa là hỏi giá thép ở Đà Nẵng).
+
+QUAN TRỌNG — câu hỏi ngoài phạm vi dù trùng từ khóa: Nếu câu hỏi thực chất \
+về một chủ đề ngoài xây dựng/vật liệu xây dựng (vd đồ dùng nhà bếp, dao thớt, \
+nấu ăn, đồ gia dụng, nội thất trang trí...) — dù tình cờ trùng một từ khóa \
+với dữ liệu xây dựng (vd "gỗ", "thép", "kính") — ĐỪNG cố ghép dữ liệu xây \
+dựng vào để trả lời. Nói ngắn gọn rằng đây ngoài phạm vi hỗ trợ (vật liệu & \
+dự toán xây dựng) và mời người dùng hỏi về xây dựng.
+
 Với lời chào hỏi, tạm biệt, cảm ơn, hay chuyện phiếm nhẹ nhàng: đáp lại \
 tự nhiên, thân thiện, ngắn gọn như một cuộc trò chuyện bình thường — \
 không cần gượng ép lái mọi câu trả lời về chủ đề xây dựng.
@@ -71,6 +107,24 @@ Trả lời bằng tiếng Việt trừ khi người dùng chủ động dùng n
 
 def _sse(payload: dict) -> str:
     return f"data: {json.dumps(payload)}\n\n"
+
+
+_REGION_NAMES = {"HN": "Hà Nội", "DN": "Đà Nẵng", "HCM": "TPHCM"}
+
+
+def _format_context_chunk(i: int, c) -> str:
+    """Label each retrieved chunk with its provenance (region/period/source) so
+    the LLM can tell which region a price belongs to — without this it happily
+    presents a Đà Nẵng price as the answer to a question about another region."""
+    tags = []
+    if getattr(c, "region", ""):
+        tags.append(f"khu vực: {_REGION_NAMES.get(c.region, c.region)}")
+    if getattr(c, "price_period", ""):
+        tags.append(f"kỳ công bố: {c.price_period}")
+    if c.document_name:
+        tags.append(f"nguồn: {c.document_name}")
+    prefix = f"[{i + 1}]" + (f" ({', '.join(tags)})" if tags else "")
+    return f"{prefix}: {c.content}"
 
 
 class FormSubmission(BaseModel):
@@ -392,13 +446,81 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
             if kb:
                 rag_scope_name = kb.name
 
+        # Prior turns (last N) as conversation memory. Persisted server-side
+        # (messages table) so multi-turn context survives without the client
+        # resending its whole history; fetched via the composite index added
+        # in migration 0006. Best-effort — a history failure must not break
+        # the reply, so it degrades to a single-turn (historyless) prompt.
+        # Fetched BEFORE retrieval because a deictic follow-up needs the prior
+        # turn to build a searchable retrieval query (see below).
+        history: list[dict] = []
+        if body.conversation_id:
+            try:
+                history = await msg_repo.get_recent(body.conversation_id, limit=10)
+            except Exception:
+                history = []
+
+        # A short follow-up ("còn ở Đà Nẵng thì sao?", "loại kia thì sao?")
+        # carries almost no searchable terms on its own — embedding it retrieves
+        # noise, so the model loses the thread. Rewrite it into a standalone
+        # question with a cheap model (condense step). Falls back to prepending
+        # the previous user turn if the rewrite is unavailable.
+        retrieval_query = body.message
+        if body.use_rag and history and len(body.message.split()) <= 8:
+            condensed = await condense_followup(llm, body.message, history)
+            if condensed:
+                retrieval_query = condensed
+            else:
+                prev_user = next(
+                    (m["content"] for m in reversed(history) if m.get("role") == "user"),
+                    None,
+                )
+                if prev_user:
+                    retrieval_query = f"{prev_user} {body.message}"
+
+        # On the pricing KB, region-aware retrieval. Detect from the (possibly
+        # condensed) retrieval query so a follow-up like "còn Đà Nẵng?" still
+        # resolves its region. Only price chunks carry a region.
+        #   • exactly 1 region → hard-filter to it, so the correct-region chunk
+        #     can't be crowded out of the top-k by a wrong-region one.
+        #   • 2+ regions (a comparison, "so sánh giá thép HN và ĐN") → retrieve
+        #     SEPARATELY per region and merge, so each region is guaranteed a
+        #     seat; a single unfiltered search lets the higher-scoring region
+        #     dominate the top-k and starves the other, making comparison
+        #     impossible.
+        regions: list[str] = []
+        if body.kb_id == KB_PRICING_ID:
+            regions = detect_regions(retrieval_query)
+
         if body.use_rag and search_kb_id:
-            chunks = await retriever.search(
-                query=body.message,
-                kb_id=search_kb_id,
-                top_k=body.top_k,
-                score_threshold=body.score_threshold,
-            )
+            if len(regions) >= 2:
+                # Each search is already region-filtered (so off-topic
+                # contamination is bounded), and a comparison-phrased query
+                # ("so sánh ... nơi nào rẻ hơn") dilutes the embedding enough to
+                # push the right chunk just under the normal 0.5 bar — so use a
+                # looser threshold here to keep recall on both regions.
+                cmp_threshold = min(body.score_threshold, 0.4)
+                chunks = []
+                seen: set[str] = set()
+                for rg in regions:
+                    for c in await retriever.search(
+                        query=retrieval_query,
+                        kb_id=search_kb_id,
+                        top_k=4,
+                        score_threshold=cmp_threshold,
+                        metadata_filters={"region": rg},
+                    ):
+                        if c.chunk_id not in seen:
+                            seen.add(c.chunk_id)
+                            chunks.append(c)
+            else:
+                chunks = await retriever.search(
+                    query=retrieval_query,
+                    kb_id=search_kb_id,
+                    top_k=body.top_k,
+                    score_threshold=body.score_threshold,
+                    metadata_filters=({"region": regions[0]} if len(regions) == 1 else None),
+                )
             sources = [
                 {
                     "chunk_id": c.chunk_id,
@@ -408,22 +530,10 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
                 }
                 for c in chunks
             ]
-            context = "\n\n".join(f"[{i + 1}]: {c.content}" for i, c in enumerate(chunks))
+            context = "\n\n".join(_format_context_chunk(i, c) for i, c in enumerate(chunks))
             user_msg = f"Context:\n{context}\n\nQuestion: {body.message}"
         else:
             user_msg = body.message
-
-        # Prior turns (last N) as conversation memory. Persisted server-side
-        # (messages table) so multi-turn context survives without the client
-        # resending its whole history; fetched via the composite index added
-        # in migration 0006. Best-effort — a history failure must not break
-        # the reply, so it degrades to a single-turn (historyless) prompt.
-        history: list[dict] = []
-        if body.conversation_id:
-            try:
-                history = await msg_repo.get_recent(body.conversation_id, limit=10)
-            except Exception:
-                history = []
 
         messages = [
             {"role": "system", "content": system_prompt},

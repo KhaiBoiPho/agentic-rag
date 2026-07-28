@@ -268,6 +268,24 @@ def detect_intent(message: str) -> str | None:
     return None
 
 
+def detect_regions(message: str) -> list[str]:
+    """All region codes (HN/DN/HCM) named in the message, in canonical order.
+    A comparison question ("so sánh giá thép Hà Nội và Đà Nẵng") names two —
+    the caller must NOT hard-filter to one of them, or the other region's data
+    never gets retrieved and the comparison becomes impossible."""
+    text = f" {message.lower()} "
+    return [region for region, keywords in _REGION_KEYWORDS if any(kw in text for kw in keywords)]
+
+
+def detect_region(message: str) -> str | None:
+    """The single region named in the message, or None if none OR more than one
+    (a multi-region query must not be filtered to just one). Used to filter
+    price retrieval so a wrong-region chunk can't crowd the correct one out of
+    the top-k."""
+    regions = detect_regions(message)
+    return regions[0] if len(regions) == 1 else None
+
+
 def prefill_from_text(message: str) -> dict:
     """Best-effort extraction of area/region already present in the user's
     message, so the form isn't blank when they've already told us. Purely
