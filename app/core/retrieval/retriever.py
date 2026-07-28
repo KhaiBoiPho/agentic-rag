@@ -37,10 +37,12 @@ class Retriever:
         top_k: int = 5,
         score_threshold: float = 0.5,  # see app/api/v1/chat.py::ChatRequest.score_threshold for why
         metadata_filters: dict[str, str] | None = None,
+        region: str | None = None,
     ) -> list[RetrievedChunk]:
         """`kb_id` accepts a list of KB ids (Project mode — search across
         every KB bundled into the project, ranked together by score) or a
-        single id (normal single-KB chat)."""
+        single id (normal single-KB chat). `region` scopes to a price region
+        while still keeping region-agnostic chunks (see QdrantStore.search)."""
         # Embed the query
         query_embs = await self._llm.embed([query])
         query_vec = query_embs[0]
@@ -52,6 +54,7 @@ class Retriever:
             top_k=top_k,
             score_threshold=score_threshold,
             metadata_filters=metadata_filters,
+            region=region,
         )
 
         results: list[RetrievedChunk] = []

@@ -494,7 +494,7 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
 
         if body.use_rag and search_kb_id:
             if len(regions) >= 2:
-                # Each search is already region-filtered (so off-topic
+                # Each search is already region-scoped (so off-topic
                 # contamination is bounded), and a comparison-phrased query
                 # ("so sánh ... nơi nào rẻ hơn") dilutes the embedding enough to
                 # push the right chunk just under the normal 0.5 bar — so use a
@@ -508,18 +508,30 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
                         kb_id=search_kb_id,
                         top_k=4,
                         score_threshold=cmp_threshold,
-                        metadata_filters={"region": rg},
+                        region=rg,
                     ):
                         if c.chunk_id not in seen:
                             seen.add(c.chunk_id)
                             chunks.append(c)
+            elif len(regions) == 1:
+                # Region-filtered (so contamination is bounded to the right
+                # region) — price rows sit in big mixed table chunks that embed
+                # weakly against a single-material query, scoring just under the
+                # 0.5 bar (e.g. HN cement chunks land ~0.45-0.48). A looser
+                # threshold recovers them without risking cross-region bleed.
+                chunks = await retriever.search(
+                    query=retrieval_query,
+                    kb_id=search_kb_id,
+                    top_k=body.top_k,
+                    score_threshold=min(body.score_threshold, 0.4),
+                    region=regions[0],
+                )
             else:
                 chunks = await retriever.search(
                     query=retrieval_query,
                     kb_id=search_kb_id,
                     top_k=body.top_k,
                     score_threshold=body.score_threshold,
-                    metadata_filters=({"region": regions[0]} if len(regions) == 1 else None),
                 )
             sources = [
                 {

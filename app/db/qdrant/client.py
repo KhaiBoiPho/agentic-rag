@@ -7,6 +7,8 @@ from typing import Any
 
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import (
+    IsEmptyCondition,
+    PayloadField,
     Distance,
     FieldCondition,
     Filter,
@@ -118,6 +120,7 @@ class QdrantStore:
         score_threshold: float = 0.5,  # see app/api/v1/chat.py::ChatRequest.score_threshold for why
         chunk_types: list[str] | None = None,
         metadata_filters: dict[str, str] | None = None,
+        region: str | None = None,
     ) -> list[ScoredPoint]:
         """metadata_filters matches against the nested `metadata` payload dict
         (e.g. {"region": "DN", "source_type": "official_annex"}) — used to
@@ -140,6 +143,22 @@ class QdrantStore:
         for key, value in (metadata_filters or {}).items():
             must_conditions.append(
                 FieldCondition(key=f"metadata.{key}", match=MatchValue(value=value))
+            )
+        # Region scoping that keeps region-agnostic chunks: match this region OR
+        # chunks with no region tag at all (e.g. companion .md files uploaded via
+        # the normal flow, or non-price knowledge chunks). A plain equality
+        # filter would silently drop those, tanking recall for a region whose
+        # data partly lives in untagged chunks — and worse, returning zero
+        # sources so the answer looks un-grounded ("Plain chat — no RAG") even
+        # when it isn't.
+        if region:
+            must_conditions.append(
+                Filter(
+                    should=[
+                        FieldCondition(key="metadata.region", match=MatchValue(value=region)),
+                        IsEmptyCondition(is_empty=PayloadField(key="metadata.region")),
+                    ]
+                )
             )
 
         results = await self._client.query_points(
