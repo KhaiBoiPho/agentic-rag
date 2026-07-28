@@ -120,17 +120,8 @@ async def delete_document(document_id: str, current_user: CurrentUser):
     if not doc:
         raise HTTPException(404, "Document not found")
     # Ownership scopes deletion to whichever user uploaded it (including for
-    # documents inside a system KB — see is_system_kb's docstring) — EXCEPT
-    # the pricing KB, which is hard-locked regardless of uploader: its
-    # documents feed material_prices, the deterministic cost-estimate tool's
-    # only real data source (§4 README) — deleting one out from under a live
-    # tool call is a correctness risk the other 3 (RAG-only) system KBs
-    # don't carry, so this one rule is unconditional rather than ownership-based.
-    if str(doc.kb_id) == KB_PRICING_ID:
-        raise HTTPException(
-            403,
-            'Tài liệu trong Kho tri thức "Dự toán giá nhà" không thể xoá — '
-            "dữ liệu giá có cấu trúc trích từ đây được dùng trực tiếp cho tính năng dự toán chi phí",
-        )
+    # documents inside a system KB — see is_system_kb's docstring). Deleting
+    # a pricing-KB document also removes the material_prices rows extracted
+    # from it — see DocumentRepository.delete().
     await qdrant.delete_by_document(document_id)
     await repo.delete(document_id, str(current_user.id))

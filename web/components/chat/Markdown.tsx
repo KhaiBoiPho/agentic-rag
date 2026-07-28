@@ -3,6 +3,8 @@
 import { memo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 import type { WebSource } from "@/lib/types";
 
 /**
@@ -31,12 +33,13 @@ function MarkdownImpl({
     );
   }
 
-  const withRefs = linkifyRefs(content, webSources);
+  const withRefs = linkifyRefs(normalizeMathDelimiters(content), webSources);
 
   return (
     <div className="md">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
         components={{
           a({ href, children }) {
             const text = String(Array.isArray(children) ? children.join("") : children ?? "");
@@ -69,6 +72,16 @@ function MarkdownImpl({
       </ReactMarkdown>
     </div>
   );
+}
+
+/** LLMs commonly emit LaTeX-style \(...\)/\[...\] delimiters instead of the
+ * $...$/$$...$$ that remark-math actually parses — CommonMark then treats
+ * the backslash as an escape and silently drops it, leaving bare brackets
+ * on screen. Convert to dollar delimiters before the markdown parser sees it. */
+function normalizeMathDelimiters(md: string): string {
+  return md
+    .replace(/\\\[([\s\S]*?)\\\]/g, (_, expr) => `$$${expr}$$`)
+    .replace(/\\\(([\s\S]*?)\\\)/g, (_, expr) => `$${expr}$`);
 }
 
 /** Replace bare `[n]` with a markdown link to sources[n-1].url so it renders as a ref. */

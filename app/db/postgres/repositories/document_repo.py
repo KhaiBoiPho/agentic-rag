@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import delete as sa_delete, func, select
 
 from app.db.postgres.base import get_session
-from app.db.postgres.models import Document, KnowledgeBase
+from app.db.postgres.models import Document, KnowledgeBase, MaterialPrice
 
 
 class DocumentRepository:
@@ -88,6 +88,10 @@ class DocumentRepository:
         async with get_session() as s:
             doc = await s.get(Document, uuid.UUID(doc_id))
             if doc and str(doc.user_id) == user_id:
+                # material_prices.document_id has no ON DELETE CASCADE — clear
+                # rows extracted from this document first, or the FK blocks
+                # deleting the document itself.
+                await s.execute(sa_delete(MaterialPrice).where(MaterialPrice.document_id == doc.id))
                 kb = await s.get(KnowledgeBase, doc.kb_id)
                 if kb and kb.document_count > 0:
                     kb.document_count -= 1

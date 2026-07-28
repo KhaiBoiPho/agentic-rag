@@ -151,6 +151,35 @@ deploy:
   document-upload flow (chunk + embed into Qdrant), no different from a
   user creating their own KB.
 
+To reproduce this repo's own local dev environment exactly (as of this
+writing: 10 documents in "Dự toán giá nhà" → 10,010 `material_prices` rows,
+3 documents in "Kiến thức về VLXD cho kỹ sư", the other 2 KBs empty), the
+source files are still sitting in `seed_data/` (unused by the app now, but
+not deleted) — drag them into the matching KB through the UI once:
+
+```
+# → "Dự toán giá nhà", via the upload-price flow:
+seed_data/prices/HN/BangGia-VLXD-HaNoi-QuyII-2026.pdf
+seed_data/prices/HN/CongVan-CongBoGia-VLXD-HaNoi-QuyII-2026.pdf
+seed_data/prices/HN/BangGia-VLXD-BoSung-NhuaDuong-HaNoi-QuyII-2026.pdf
+seed_data/prices/DN/BangGia-VLXD-DaNang-Thang06-2026.pdf
+seed_data/prices/DN/CongVan-CongBoGia-VLXD-DaNang-Thang06-2026.pdf
+seed_data/prices/DN/BangGia-VatTuDien-DaNang-Thang06-2026.pdf
+seed_data/prices/DN/BangGia-VatTuNuoc-DaNang-Thang06-2026.pdf
+seed_data/prices/HCM/ThongBao-CongBoGia-VLXD-HCM-Thang06-2026.pdf
+seed_data/prices/HCM/BangGia-VLXD-KhoangSan-HCM-Thang06-2026.pdf
+seed_data/prices/HCM/BangGia-VLXD-ThamKhaoThiTruong-HCM-Thang06-2026.pdf
+
+# → "Kiến thức về VLXD cho kỹ sư", via the normal upload flow:
+seed_data/knowledge/QCVN-16-2023.pdf
+seed_data/knowledge/VLXDMoi_PhamHuuDuy.pdf
+seed_data/knowledge/DataRAG-uoc-luong-gia-vlxd.md
+```
+
+There's no one-command way to bulk-load these on Railway — the auto-seed
+task that used to do this was deliberately removed in favor of the normal
+upload UI, so this is a one-time manual step per fresh deploy.
+
 **Cost-estimation without `material_prices` populated:** the
 `/api/v1/chat/stream` construction-cost tool doesn't crash or hang on a
 missing price — for each material it (1) looks up `material_prices`, (2)
