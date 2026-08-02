@@ -2,9 +2,25 @@
 
 Tài liệu này mô tả **toàn bộ** luồng vận hành thực tế của hệ thống: từ lúc nạp
 tài liệu (chunking, xử lý bảng, trích giá), qua lưu trữ vector, đến luồng chat
-(small-talk, phát hiện ý định, guard kiểm chủ đề, RAG, dự toán chi phí), các
-sub-model phụ trợ, giọng nói, và danh sách API. Mọi con số/tham số nêu ra đều
-lấy trực tiếp từ mã nguồn (đường dẫn file kèm theo để tra cứu).
+(small-talk, phát hiện ý định, guard kiểm chủ đề, RAG, công cụ, dự toán chi
+phí), các sub-model phụ trợ, giọng nói, và danh sách API.
+
+**Mọi con số nêu ra đều lấy từ mã nguồn hoặc từ phép đo chạy trên chính dữ
+liệu của dự án** — không lấy từ bảng xếp hạng chung của model. Chỗ nào là lập
+luận chưa đo, tài liệu nói rõ như vậy.
+
+### Đọc theo nhu cầu
+
+| bạn muốn hiểu | đọc mục |
+|---|---|
+| **vì sao chọn công nghệ/model này** mà không phải cái khác | **§0B** |
+| tài liệu PDF được bóc ra sao, ô gộp xử lý thế nào | §2.5 → §2.7 |
+| PDF scan không có lớp text thì sao | §2.12 |
+| embedding và tìm kiếm vector **thực chất là gì** | §4.0 |
+| giá từ PDF vào database rồi ra câu trả lời bằng cách nào | **§5B** (có ví dụ trực quan) |
+| **"tool" là gì**, hệ thống có những tool nào | **§6B** |
+| công thức dự toán theo từng loại hình công trình | §8B |
+| những gì đã thử và **bị loại bằng số liệu** | §0B.7, §5B.8 |
 
 > Quy ước đọc: `app/...py:NN` = file:dòng. Các hằng số cấu hình mặc định nằm ở
 > [app/config.py](../app/config.py), giá trị chạy thật lấy từ `.env`.
@@ -41,7 +57,178 @@ Các model OpenRouter (mặc định trong `.env` của bản deploy hiện tạ
 | Embedding | `OPENROUTER_EMBED_MODEL` = `openai/text-embedding-3-small` | vector hoá chunk + query, **dim 1536** |
 | Classifier (rẻ/nhanh) | `OPENROUTER_CLASSIFIER_MODEL` = `openai/gpt-4o-mini` | topic-guard, condense follow-up, disambiguation… |
 | Research | `OPENROUTER_RESEARCH_MODEL` | các node deep-research |
-| Vision | `OPENROUTER_VISION_MODEL` | OCR trang PDF scan |
+| Vision — đọc cấu trúc bảng | `OPENROUTER_VISION_TABLE_MODEL` = `google/gemini-2.5-flash` | OCR trang PDF scan thành HTML bảng (§2.12) |
+| Vision — đối chiếu số | `OPENROUTER_VISION_MODEL` = `anthropic/claude-haiku-4.5` | đọc lại cùng trang dạng text để soi số bịa (§2.12) |
+
+---
+
+## 0B. Vì sao chọn những công nghệ và model này
+
+Mục này ghi lại **lý do** đằng sau từng lựa chọn, và quan trọng hơn — **cái gì
+đã được đo, cái gì mới chỉ là lập luận**. Chỗ nào có số, số đó lấy từ phép đo
+chạy trên chính dữ liệu của dự án, không phải từ bảng xếp hạng chung.
+
+> Quy ước: **[ĐO]** = có phép đo trên dữ liệu dự án · **[LẬP LUẬN]** = quyết
+> định theo nguyên tắc, chưa đo · **[RÀNG BUỘC]** = do môi trường ép buộc.
+
+### 0B.1. Bóc PDF — vì sao dùng CẢ PyMuPDF lẫn pdfplumber
+
+Không phải thừa. Hai thư viện giỏi hai việc khác nhau:
+
+| | PyMuPDF (`fitz`) | pdfplumber |
+|---|---|---|
+| lấy text theo khối + toạ độ | **rất nhanh** | chậm |
+| nhận diện **bảng** từ đường kẻ | không có | **có** |
+| biết ô nào là **ô gộp** | không | **có** (`rows[r].cells[c] is None`) |
+
+**[ĐO]** Chính khả năng thứ ba của pdfplumber là thứ không thể thay thế. §2.6
+cho thấy `rows[r].cells[c] is None` là **tín hiệu duy nhất** phân biệt "ô rỗng
+thật" với "thân của ô gộp phía trên" — và phân biệt sai chỗ đó khiến 11/12 mẫu
+đèn mất tiêu chuẩn kỹ thuật, dẫn tới model bịa câu trả lời.
+
+Ngược lại, dùng pdfplumber cho toàn bộ text sẽ chậm hơn nhiều trên phụ lục 699
+trang. Nên: **pdfplumber lo bảng + hình học, PyMuPDF lo text.**
+
+**Đã cân nhắc và loại:** `pypdf` (không có bảng), `camelot`/`tabula` (cần Java
+hoặc Ghostscript, thêm phụ thuộc hệ thống nặng vào image Docker),
+`unstructured` (kéo theo hàng loạt model ML, image phồng lên nhiều GB).
+
+### 0B.2. Embedding — `text-embedding-3-small`, và vì sao KHÔNG dùng `large`
+
+**[ĐO]** Đây là kết quả phản trực giác nhất của dự án. Đo khả năng phân biệt
+sản phẩm gần giống nhau, câu hỏi `"xi măng Bút Sơn PCB40"`:
+
+| ứng viên | small | large |
+|---|---:|---:|
+| A — đúng hoàn toàn | 0,8788 | 0,8800 |
+| B — sai thương hiệu (Nghi Sơn) | 0,8198 | 0,8496 |
+| C — sai mác (PCB30) | 0,7907 | 0,8140 |
+| D — bẫy: "chống thấm gốc xi măng" | 0,3616 | 0,4988 |
+
+| khoảng cách phân biệt | small | large |
+|---|---:|---:|
+| đúng − sai thương hiệu | **+0,0590** | +0,0304 |
+| đúng − sai mác | **+0,0881** | +0,0660 |
+| đúng − bẫy | **+0,5172** | +0,3811 |
+
+`large` **làm mọi khoảng cách hẹp lại** — nhất quán trên cả ba phép đo. Với
+bài toán này (phân biệt PCB40 với PCB30, Bút Sơn với Nghi Sơn) thì mô hình
+"mạnh hơn" lại **tệ hơn**, và đắt hơn. Nâng cấp không phải hướng đi.
+
+**[ĐO]** Cũng đo được: bỏ dấu tiếng Việt làm **đảo ngược thứ hạng** — sai
+thương hiệu (0,762) vượt đúng (0,716). Đây là bằng chứng số cho việc phải xử
+lý `unaccent` ở tầng SQL (§5B.6), chứ không trông chờ embedding.
+
+**[RÀNG BUỘC]** OpenRouter chỉ phục vụ 2 model embedding
+(`text-embedding-3-small` và `-large`), nên không thử được model đa ngữ
+chuyên biệt như BGE-M3 hay Cohere multilingual. Nếu sau này tự host được, đó
+là hướng đáng thử — vì §5B.8 cho thấy trần của tìm kiếm vector với câu hỏi tra
+giá chỉ ~0,61, bất kể chia chunk thế nào.
+
+### 0B.3. Vector store — Qdrant
+
+**[LẬP LUẬN]** Chọn vì ba tính chất bài toán này cần:
+
+1. **Lọc payload kèm tìm kiếm.** Truy hồi phải giới hạn theo `kb_id` (nhiều
+   KB), và với câu hỏi giá còn phải lọc theo `region`. Qdrant làm việc này
+   trong cùng một truy vấn thay vì lọc sau.
+2. **Hybrid dense + sparse.** Collection đã khai báo sẵn cả hai
+   (`DENSE_VECTOR`, `SPARSE_VECTOR`) để sau này bật BM25 — hữu ích đúng với
+   trường hợp mã sản phẩm (`CXV-150`) mà vector khớp kém.
+3. **Tự host được**, không khoá vào nhà cung cấp.
+
+**Đã cân nhắc:** `pgvector` (gọn hơn vì đã có Postgres, nhưng lọc payload phức
+tạp và không có sparse sẵn), Pinecone/Weaviate cloud (thêm phụ thuộc ngoài và
+chi phí cố định).
+
+### 0B.4. Hàng đợi — RabbitMQ
+
+**[LẬP LUẬN]** Nạp một phụ lục 699 trang mất vài phút (chunk + embed + trích
+bảng). Không thể để request HTTP treo suốt thời gian đó. Queue cho phép trả
+`202 Accepted` + `job_id` ngay, xử lý nền.
+
+Consumer chạy **trong chính process app** (task nền khởi động ở `main.py`) với
+`prefetch_count=4` — đủ để không quá tải, và tránh phải vận hành thêm một
+service worker riêng.
+
+**Đã cân nhắc:** Celery (nặng, thêm broker + result backend), `BackgroundTasks`
+của FastAPI (mất job khi process restart — không chấp nhận được với job vài
+phút).
+
+### 0B.5. Model cho từng việc — mỗi việc một model
+
+Không dùng một model cho tất cả. Việc rẻ thì dùng model rẻ:
+
+| việc | model | vì sao |
+|---|---|---|
+| chat chính | frontend truyền vào | người dùng chọn |
+| embedding | `text-embedding-3-small` | **[ĐO]** §0B.2 |
+| guard chủ đề, condense follow-up, chọn dòng vật liệu | `gpt-4o-mini` | phân loại nhị phân / chọn 1 trong N — không cần model mạnh, chạy trước **mọi** câu hỏi nên phải rẻ |
+| OCR cấu trúc bảng | `gemini-2.5-flash` | **[ĐO]** §0B.6 |
+| OCR đối chiếu số | `claude-haiku-4.5` | **[ĐO]** §0B.6 |
+| STT tiếng Việt | PhoWhisper (faster-whisper) | **[LẬP LUẬN]** §9.1 |
+| TTS | OpenAI `/v1/audio/speech` trực tiếp | **[RÀNG BUỘC]** §9.2 |
+
+### 0B.6. OCR — vì sao flash + haiku, không phải Opus
+
+**[ĐO]** Đo trên bản scan Vicem Hà Tiên (bảng 19 cột, header 2 tầng, ô đơn vị
+gộp suốt cột), chấm **từng dòng** so với trang in:
+
+| model (lượt cấu trúc) | giá đúng | ghi chú | USD/trang |
+|---|---:|---|---:|
+| **gemini-2.5-flash** | **15/15** | — | 0,0068 |
+| claude-opus-4.5 | 15/15 | không hơn được gì đo được | 0,0710 |
+| claude-sonnet-4.5 | — | sai chính tả "Hà Long"/"Hạ Long" | 0,0426 |
+| gpt-4o | 14/15 | đọc `1.356.481` thành `1.436.481` — **giá sai** | 0,0293 |
+| gemini-2.5-pro | 0 | không xuất bảng nào | — |
+
+Flash **bằng Opus** ở độ chính xác nhưng rẻ hơn **10 lần**. Opus không mua
+được gì đo được trên corpus này.
+
+Lượt đối chiếu đo riêng theo **độ bắt số** (bỏ sót số thật ⇒ làm trống nhầm
+một giá đúng): haiku-4.5 **16/16**, flash 16/16, gpt-4o-mini 15/16.
+
+**Vì sao hai model phải khác nhà cung cấp [LẬP LUẬN]:** model được yêu cầu
+xuất bảng có thể bịa một ô cho hàng "cân đối"; hỏi lại chính nó, cùng
+`temperature=0`, cùng ảnh, thì nó lặp lại đúng cái bịa đó. Chi phí của tính
+độc lập là **0,004 USD/trang** — rẻ so với một con giá sai lọt vào dự toán.
+
+### 0B.7. Những phương án đã thử và BỊ LOẠI bằng số liệu
+
+Ghi lại để người sau khỏi thử lại. Kết quả âm cũng là kết quả.
+
+| ý tưởng | kỳ vọng | kết quả đo | quyết định |
+|---|---|---|---|
+| Embed chunk bảng dưới dạng **văn xuôi** thay HTML | gộp tên + thương hiệu vào một câu | MRR **0,386** vs 0,433 của HTML; dài hơn **+10%** token | **loại** (§5B.8) |
+| **Cắt nhỏ** chunk bảng (5 hàng/chunk) | tăng tín hiệu mỗi sản phẩm | similarity 0,576 → 0,614, đối thủ 0,611 — thắng 0,003; số chunk ×3 | **loại** (§5B.8) |
+| `text-embedding-3-large` | phân biệt tốt hơn | mọi khoảng cách **hẹp lại** | **loại** (§0B.2) |
+| `word_similarity` (pg_trgm) để nới lỏng khớp tên | chịu được thứ tự từ | xếp **sai thương hiệu** lên hạng 1 (Hạ Long 0,742 > Hà Tiên 0,741) | **loại** (§5B.6) |
+| `top_k` 5 → 10 | thêm cơ hội trúng chunk đúng | cứu thêm **1/16** câu, không chạm câu tra giá (hạng 11); gấp đôi context | **loại** |
+| text2sql cho câu hỏi giá | linh hoạt hơn | không chạm chỗ nghẽn thật (khớp tên) | **loại** (§6B.4) |
+
+### 0B.8. Hai nguyên tắc xuyên suốt
+
+**1. Con số đi đường tất định, chữ đi đường xấp xỉ.**
+Tìm kiếm vector trả về "gần giống", và với một con giá thì "gần giống" là sai.
+`material_prices` + SQL cho con số; Qdrant + embedding cho văn bản giải thích.
+§5B.1 có số liệu: cùng một câu hỏi, `ILIKE '%xi măng%'` cho ra 135 sản phẩm
+trải từ 1.400 đến 4.766.000 đ — "giá xi măng" **không có một đáp án**.
+
+**2. "Không tìm thấy" luôn tốt hơn "sai".**
+Nguyên tắc này quyết định rất nhiều chi tiết trong code, không chỉ là khẩu
+hiệu:
+
+- `lookup_material_price` trả nguyên văn *"Không suy đoán giá"* thay vì lấy
+  dòng gần giống.
+- Nới lỏng khớp tên **dừng ở 2 từ** — vì nới tới 1 từ đã trả **trần nhôm** cho
+  câu hỏi xi măng Hoàng Thạch (§5B.6).
+- **Không bao giờ bỏ từ có chữ số** — vì bỏ `d12` đã trả **vách kính** cho câu
+  hỏi thép D12.
+- Ô số trong OCR không đối chiếu được thì **làm trống**, không giữ (§2.12).
+- Đơn giá ngoài biên hợp lý bị **loại** — biên này sinh ra sau khi web
+  fallback trả 1,8 tỷ đ/kg thép, thành một hạng mục **31.500 tỷ đ** (§8B.6).
+- Bảng OCR không nhận được header thì **không phát `<th>`**, vì gán nhầm một
+  dòng sản phẩm thành nhãn cột còn tệ hơn không có nhãn (§2.7).
 
 ---
 
@@ -51,14 +238,38 @@ Các model OpenRouter (mặc định trong `.env` của bản deploy hiện tạ
 
 File: [app/api/v1/documents.py](../app/api/v1/documents.py)
 
-1. **Upload thường** — `POST /api/v1/documents/upload/{kb_id}`
-   - Nhận file (`.pdf/.docx/.doc/.txt/.md`), đẩy job vào RabbitMQ với `mode="standard"`.
-   - Chỉ chunk → embed → Qdrant (RAG thuần).
+**Đường chính** — `POST /api/v1/documents/upload/{kb_id}` — tự chọn pipeline
+theo **thiết lập của KB**, người gọi không phải biết chọn endpoint nào:
 
-2. **Upload trích giá** — `POST /api/v1/documents/upload-price/{kb_id}?region=HN&price_period=2026-06`
-   - Chỉ chấp nhận cho **KB "Dự toán giá nhà"** (`is_system_kb(kb_id) and kb_id != KB_PRICING_ID` → 403).
-   - `region` **bắt buộc** (HN/DN/HCM); `price_period` tuỳ chọn.
-   - Đẩy job với `mode="price_extraction"` → chạy **cả** chunk→Qdrant **và** trích bảng giá có cấu trúc vào `material_prices`.
+```
+POST /upload/{kb_id}?region=HN&price_period=2026-06
+   │
+   ├─ đọc knowledge_bases.price_extraction
+   │
+   ├── false ──► mode="standard"
+   │              chunk → embed → Qdrant                    (RAG thuần)
+   │
+   └── true ───► region rỗng?  ──► 400, chặn ngay tại API
+                 │
+                 └─► mode="price_extraction"
+                      NHÁNH A: chunk → embed → Qdrant       (phần chữ)
+                      NHÁNH B: bóc bảng → material_prices   (phần số)
+```
+
+Nhận `.pdf` / `.docx` / `.doc` / `.txt` / `.md`, tối đa 50 MB.
+
+**Đường phụ** — `POST /api/v1/documents/upload-price/{kb_id}?region=…` — ép
+chạy trích giá cho **một** lần upload mà không đổi thiết lập KB. `region` bắt
+buộc.
+
+> **Đã đổi từ migration `0008`.** Trước đây chỉ KB "Dự toán giá nhà" được phép
+> trích giá (id cố định, các KB khác trả 403). Giờ **bất kỳ KB nào** cũng bật
+> được — kể cả KB người dùng tự tạo — qua cờ `price_extraction` (§12.1).
+>
+> **`region` bắt buộc khi cờ bật** vì `material_prices.region` là thứ **mọi**
+> truy vấn giá lọc theo. Một dòng giá lưu không có vùng sẽ không bao giờ được
+> tìm thấy — nên chặn ngay lúc upload tốt hơn là nạp vào rồi không dùng được.
+> Giao diện khoá vùng thả file cho tới khi người dùng chọn vùng.
 
 > Vì sao dùng queue: request upload chỉ enqueue rồi trả về ngay. Một PDF phụ lục
 > giá dài 128 trang có thể mất hàng chục giây để chunk+embed+trích bảng — làm
@@ -477,6 +688,60 @@ Lỗi ở bất kỳ bước nào → `status=error` + event `stage=error`.
 File: [app/db/qdrant/client.py](../app/db/qdrant/client.py),
 [app/core/retrieval/retriever.py](../app/core/retrieval/retriever.py)
 
+### 4.0. Embedding và tìm kiếm vector — thực chất là gì
+
+Máy không so sánh được nghĩa của hai câu chữ. Nên ta biến mỗi đoạn văn bản
+thành một **dãy 1536 con số** (gọi là *vector* hay *embedding*) sao cho hai
+đoạn ý nghĩa gần nhau thì hai dãy số cũng gần nhau.
+
+```
+"Xi măng bao Bút Sơn PCB40"   ──embed──►  [0.021, -0.118, 0.077, … ]  (1536 số)
+"Xi măng Nghi Sơn PCB40"      ──embed──►  [0.019, -0.121, 0.081, … ]  ← rất gần
+"Thép thanh vằn D10 CB300-V"  ──embed──►  [-0.203, 0.412, -0.056, …]  ← xa
+```
+
+"Gần nhau" đo bằng **cosine similarity** — về bản chất là góc giữa hai vector,
+quy về một số trong khoảng −1 đến 1. Càng gần 1 càng giống nghĩa. Số đo thật
+trên dữ liệu dự án:
+
+| cặp | cosine |
+|---|---:|
+| "xi măng Bút Sơn PCB40" ↔ "Xi măng bao Bút Sơn Xanh đa dụng PCB40" | 0,879 |
+| "xi măng Bút Sơn PCB40" ↔ "Xi măng bao **Nghi Sơn** Xanh đa dụng PCB40" | 0,820 |
+| "xi măng Bút Sơn PCB40" ↔ "Vật liệu chống thấm gốc xi măng" | 0,362 |
+| "xi măng Bút Sơn PCB40" ↔ "Thép thanh vằn D10 CB300-V" | 0,427 |
+
+Đọc bảng này thấy ngay **sức mạnh và giới hạn** của phương pháp:
+
+- Nó **loại được thứ không liên quan** rất tốt (0,88 vs 0,36 — cách nhau xa).
+- Nhưng **phân biệt sản phẩm gần giống thì rất yếu**: đúng thương hiệu 0,879
+  so với sai thương hiệu 0,820 — chỉ hơn **0,059**. Một chút nhiễu là đảo thứ
+  hạng.
+
+Đó chính là lý do con số giá **không** được lấy từ đường này (§5B.1), và lý do
+`text-embedding-3-large` bị loại vì nó làm khoảng cách đó **hẹp hơn nữa**
+(§0B.2).
+
+**Toàn bộ quy trình:**
+
+```
+LÚC NẠP                            LÚC HỎI
+─────────                          ────────
+chunk ──embed──► vector            câu hỏi ──embed──► vector
+                   │                                     │
+                   ▼                                     ▼
+            lưu vào Qdrant  ◄────── so cosine ───────────┘
+            kèm payload              lấy top_k = 5 điểm cao nhất
+            (kb_id, region, …)       + lọc payload (kb_id, region)
+                                            │
+                                            ▼
+                                     nhét vào prompt
+```
+
+Điều được đem đi embed **không phải** `content` mà là `full_content` =
+`context_above` + `content` + `context_below` (§2.1) — tức chunk bảng được
+embed **kèm** đoạn văn bao quanh nó.
+
 ### 4.1. Payload mỗi point
 
 ```python
@@ -503,7 +768,7 @@ File: [app/db/qdrant/client.py](../app/db/qdrant/client.py),
   vùng"** — `Filter(should=[region==X, IsEmpty(region)])`. Nhờ vậy chunk
   region-agnostic (file .md không gắn vùng, chunk kiến thức) **không bị loại**,
   đồng thời chunk giá **sai vùng** vẫn bị loại. (Đây là fix cho lỗi badge "Plain
-  chat" và recall — xem §7.6.)
+  chat" và recall — xem §7.2 và git history commit `d957a6c`.)
 
 `RetrievedChunk` mang thêm `region`, `price_period` lấy từ `payload.metadata` để
 tầng chat gắn nhãn nguồn cho model.
@@ -983,12 +1248,32 @@ chính. **Fail-open**: lỗi classifier → cho câu đi tiếp (không chặn o
 ### 6.4. Agent mode (tool-loop) — LLM tự gọi công cụ
 
 File: [app/core/llm/tool_loop.py](../app/core/llm/tool_loop.py). Khi
-`mode=="agent"`: nạp history + để model **tự quyết** gọi công cụ MCP
-(`lookup_material_price`, `estimate_material_quantity`,
-`calculate_construction_cost`) qua function-calling, vòng lặp bounded
-`max_rounds=4` (call → execute tool → call lại với kết quả → trả lời).
-`tool_call_log` được trả về client như `sources` để phân biệt câu trả lời có
-dùng công cụ.
+`mode=="agent"`: truy hồi RAG trước, rồi để model **tự quyết** gọi công cụ qua
+function-calling, vòng lặp bounded `max_rounds=4` (gọi → chạy tool → gọi lại
+với kết quả → trả lời). Cơ chế và danh sách công cụ: **§6B**.
+
+`tool_call_log` được trả về client trong `sources` để phân biệt câu trả lời có
+dùng công cụ hay không.
+
+#### Bốn chế độ trên giao diện, ánh xạ xuống backend
+
+Người dùng chọn chế độ ở thanh soạn thảo ([Composer.tsx](../web/components/chat/Composer.tsx)):
+
+| chế độ UI | body gửi lên | phạm vi truy hồi | công cụ |
+|---|---|---|---|
+| **Trò chuyện** | `mode:"rag"` | KB / Project đang chọn | ✘ |
+| **Tìm kiếm** | *(endpoint riêng)* | web (Firecrawl) | ✘ |
+| **Nghiên cứu** | *(endpoint riêng)* | web, vòng LangGraph (§10) | ✘ |
+| **Agentic** | `mode:"agent"`, `all_kbs:true` | **TOÀN BỘ** KB người dùng thấy được | ✔ 3 công cụ |
+
+`all_kbs` được giải **ở phía server trên từng request** (`_resolve_rag_scope`)
+chứ không phải client gửi lên một danh sách id. Nhờ vậy một KB vừa tạo cách
+đây một phút cũng nằm trong phạm vi tìm mà client không cần đồng bộ lại gì.
+
+> **Ghi chú lịch sử:** trước khi có chế độ Agentic, frontend **luôn** gửi
+> `mode:"rag"` — nghĩa là nhánh tool-loop tồn tại trong code nhưng **chưa bao
+> giờ chạy được từ giao diện**. Ba công cụ chỉ dùng được qua MCP client bên
+> ngoài.
 
 ### 6.5. Đường RAG / plain chat (mặc định)
 
@@ -1024,6 +1309,209 @@ dùng công cụ.
 - **Từ chối câu ngoài phạm vi dù trùng từ khoá** ("thớt gỗ" dù có "gỗ").
 - **Câu tiếp nối**: suy chủ đề từ lượt trước (không hỏi lại "bạn hỏi vật liệu gì").
 - Câu chung chung mà dữ liệu chỉ có sản phẩm hẹp → không liệt kê số, hỏi lại.
+
+---
+
+## 6B. Công cụ (tool) — cơ chế và danh sách đầy đủ
+
+### 6B.1. "Tool" nghĩa là gì
+
+Model ngôn ngữ **không chạy được code** và **không truy cập được database**.
+Nó chỉ sinh ra chữ. Vậy làm sao nó trả lời được "giá xi măng bao nhiêu"?
+
+Tool là cơ chế cho model **yêu cầu hệ thống chạy hộ một hàm**. Ta khai báo
+trước cho model biết có những hàm nào, mỗi hàm nhận tham số gì. Khi model
+thấy cần, nó **không trả lời bằng chữ** mà trả về một *yêu cầu gọi hàm*:
+
+```json
+{
+  "name": "lookup_material_price",
+  "arguments": {"region": "HN", "material_name": "xi măng Bút Sơn PCB40"}
+}
+```
+
+Code của hệ thống bắt lấy yêu cầu đó, **tự chạy SQL**, rồi đưa kết quả **quay
+lại** cho model dưới dạng một tin nhắn `role="tool"`. Model đọc kết quả đó rồi
+mới viết câu trả lời cuối.
+
+> **Điểm mấu chốt:** model **không tự bịa được con số**. Nó chỉ được nhìn thấy
+> những dòng SQL thật sự trả về, và diễn đạt lại. Nếu SQL trả 0 dòng, tool trả
+> về nguyên văn *"Không tìm thấy giá… Không suy đoán giá"* và model buộc phải
+> nói không có dữ liệu.
+
+Vòng lặp thực hiện việc này là `run_tool_loop`
+([tool_loop.py](../app/core/llm/tool_loop.py)), chạy tối đa **4 vòng** — vì
+một câu hỏi có thể cần nhiều lượt (tra giá xi măng, rồi tra giá thép, rồi mới
+tổng hợp).
+
+```
+   ┌─────────────────────────────────────────────────────────┐
+   │ vòng lặp tối đa 4 lần                                    │
+   │                                                          │
+   │   messages  ──────────────►  LLM                         │
+   │                               │                          │
+   │                    có tool_calls?                        │
+   │                       │              │                   │
+   │                     KHÔNG           CÓ                   │
+   │                       │              │                   │
+   │                   trả lời      chạy handler (SQL/web)    │
+   │                    → THOÁT      kết quả → append vào     │
+   │                                 messages dạng role=tool  │
+   │                                      │                   │
+   │                                      └──► quay lại đầu   │
+   └─────────────────────────────────────────────────────────┘
+```
+
+Mỗi lần gọi được ghi vào `tool_call_log` và trả về client trong trường
+`sources`, nên trên giao diện phân biệt được câu trả lời nào dựa trên tra cứu
+thật, câu nào chỉ là RAG.
+
+### 6B.2. Không phải "thay vì RAG" — mà là "cùng lúc với RAG"
+
+Đây là chỗ dễ hiểu nhầm nhất. Ở chế độ **Agentic**, cả hai đều chạy:
+
+```
+Người dùng: "Giá xi măng Bút Sơn PCB40 ở Hà Nội bao nhiêu?"
+   │
+   ├─ BƯỚC 1 — RAG (Qdrant)
+   │     tìm 5 chunk gần nghĩa nhất trên TOÀN BỘ kho tri thức
+   │     → đặt vào MỘT system message riêng, dán nhãn "tư liệu tham khảo"
+   │
+   ├─ BƯỚC 2 — dựng messages đưa cho model
+   │     · system prompt (vai trò, quy tắc chống bịa)
+   │     · system message chứa tư liệu RAG
+   │     · lịch sử hội thoại (10 lượt gần nhất)
+   │     · câu hỏi người dùng
+   │     + kèm danh sách schema của 3 tool
+   │
+   ├─ BƯỚC 3 — MODEL TỰ QUYẾT
+   │     thấy câu hỏi về đơn giá → phát yêu cầu gọi tool
+   │
+   ├─ BƯỚC 4 — hệ thống chạy SQL trên material_prices
+   │     → "Xi măng bao Bút Sơn Xanh đa dụng PCB40 | tấn | 1.140.000"
+   │     → trả về cho model dưới dạng role="tool"
+   │
+   └─ BƯỚC 5 — model viết câu trả lời từ kết quả SQL đó
+```
+
+**RAG lo phần chữ** (điều kiện giá, đã gồm VAT chưa, tiêu chuẩn kỹ thuật).
+**Tool lo phần số.** Model tự quyết dùng cái nào, hoặc cả hai.
+
+> **Bẫy đã từng mắc:** ban đầu tư liệu RAG bị **gắn thẳng vào câu hỏi** dạng
+> `"Context: …\n\nQuestion: …"`. Model nhìn thấy khối tư liệu to trước mặt,
+> coi đó là tài liệu để trả lời, không thấy Bút Sơn trong đó, và kết luận
+> "không có dữ liệu" — **bỏ qua bước gọi tool hoàn toàn**. Chi tiết và thí
+> nghiệm đối chứng ở §5B.9.
+
+### 6B.3. Danh sách đầy đủ 6 tool
+
+Hệ thống định nghĩa **6 tool** trong MCP server
+([server.py](../app/core/mcp/server.py)), nhưng **chỉ 3** được đưa cho chat
+agent ([tool_loop.py](../app/core/llm/tool_loop.py)):
+
+| tool | agent thấy? | chạm vào | file |
+|---|:--:|---|---|
+| `lookup_material_price` | ✔ | Postgres | [price_lookup_tool.py](../app/core/mcp/tools/price_lookup_tool.py) |
+| `estimate_material_quantity` | ✔ | thuần tính toán | [quantity_tool.py](../app/core/mcp/tools/quantity_tool.py) |
+| `calculate_construction_cost` | ✔ | Postgres + web | [cost_tool.py](../app/core/mcp/tools/cost_tool.py) |
+| `rag_query` | ✘ | Qdrant | [rag_tool.py](../app/core/mcp/tools/rag_tool.py) |
+| `web_search` | ✘ | Firecrawl | [search_tool.py](../app/core/mcp/tools/search_tool.py) |
+| `deep_research` | ✘ | LangGraph + Firecrawl | [research_tool.py](../app/core/mcp/tools/research_tool.py) |
+
+**Vì sao 3 tool kia không đưa cho agent:** `rag_query` là thừa — ngữ cảnh RAG
+đã được nhét sẵn vào prompt ở BƯỚC 1, đưa thêm tool chỉ khiến model gọi lại
+một việc vừa làm xong. `web_search` và `deep_research` có đường đi riêng trên
+giao diện (chế độ **Tìm kiếm** và **Nghiên cứu**), nơi người dùng chủ động
+chọn; để model tự gọi chúng giữa một câu hỏi thường sẽ làm thời gian trả lời
+nhảy từ vài giây lên hàng chục giây mà người dùng không lường trước. Chúng vẫn
+nằm trong MCP server để công cụ ngoài (MCP client) dùng được.
+
+---
+
+#### `lookup_material_price` — tra một đơn giá
+
+| tham số | kiểu | bắt buộc | ý nghĩa |
+|---|---|:--:|---|
+| `region` | `HN` \| `DN` \| `HCM` | **✔** | vùng giá |
+| `material_name` | chuỗi | ✘ | tên vật liệu, vd `"xi măng PCB40"` |
+| `material_category` | chuỗi | ✘ | nhóm, vd `"xi măng"`, `"thép"` |
+
+Trả về bảng markdown tối đa 10 dòng: tên (kèm `spec`), đơn giá, cơ sở giá (tại
+mỏ / tại chân công trình), kỳ công bố, nguồn (kèm nhà sản xuất).
+
+Không tìm thấy thì trả **nguyên văn** *"Không tìm thấy giá cho vùng=…,
+category=…, name=… Không suy đoán giá — cần bổ sung dữ liệu nguồn hoặc mở rộng
+tiêu chí tìm kiếm."* Câu đó là **cố ý**: nó buộc model nói thẳng là không có,
+thay vì lấy một dòng gần giống ra thế chỗ.
+
+Cách khớp tên (theo từng từ, bỏ dấu, nới lỏng an toàn) ở §5B.6.
+
+---
+
+#### `estimate_material_quantity` — khối lượng theo công thức đo bóc
+
+| tham số | kiểu | bắt buộc |
+|---|---|:--:|
+| `work_type` | `concrete` \| `rebar_geometry` \| `rebar_bbs` \| `masonry_wall` \| `plaster` \| `tiling` \| `paint` | **✔** |
+| `params` | object, tuỳ theo `work_type` | **✔** |
+
+Đây là tool **duy nhất không chạm database** — nó chỉ áp công thức trong
+[formulas.py](../app/core/construction/formulas.py). Dùng khi **đã biết kích
+thước hình học**: "đổ 12 m³ bê tông cần bao nhiêu xi măng, cát, đá", "tường
+dài 20 m cao 3 m dày 100 mm cần bao nhiêu viên gạch".
+
+Khác với `calculate_construction_cost` ở chỗ: tool này **không ra tiền**, chỉ
+ra khối lượng, và cần đầu vào chính xác hơn (kích thước thật, không phải diện
+tích sàn ước lượng).
+
+---
+
+#### `calculate_construction_cost` — dự toán từ diện tích
+
+| tham số | kiểu | bắt buộc | ý nghĩa |
+|---|---|:--:|---|
+| `floor_area_m2` | số | **✔** | diện tích tham chiếu (xem §8B.2 — **không phải lúc nào cũng là diện tích sàn**) |
+| `region` | `HN` \| `DN` \| `HCM` | **✔** | vùng để tra đơn giá |
+| `project_type` | 10 giá trị (xem §8B.3) | ✘ | mặc định `nha_pho` |
+| `finish_level` | `tho` \| `hoan_thien_co_ban` \| `hoan_thien_cao_cap` | ✘ | chỉ có nghĩa với loại hình có hoàn thiện |
+
+Đây là tool phức tạp nhất — nó **gọi `lookup_material_price` nhiều lần bên
+trong** (mỗi vật liệu một lần, chạy song song bằng `asyncio.gather`), cộng
+thêm một sub-model chọn đúng dòng trong số ứng viên, và một đường web fallback
+khi DB không có giá. Chi tiết ở §8 và §8B.
+
+---
+
+#### `rag_query`, `web_search`, `deep_research` — chỉ MCP
+
+| tool | tham số | ghi chú |
+|---|---|---|
+| `rag_query` | `query`, `kb_id` (bắt buộc), `top_k` | tìm chunk trong một KB |
+| `web_search` | `query` (bắt buộc), `max_results` | Firecrawl, trả nội dung đã scrape |
+| `deep_research` | `query` (bắt buộc), `max_iterations` | vòng LangGraph 6 node (§10) |
+
+### 6B.4. Vì sao dùng tool-calling, không dùng text2sql
+
+Câu hỏi hợp lý: sao không để LLM tự viết SQL rồi chạy?
+
+| | tool có tham số kiểu | text2sql |
+|---|---|---|
+| không gian truy vấn | liệt kê được hết (1 bảng, ~12 cột, không join) | mở |
+| test được không | **được** — gọi hàm với tham số cố định, so kết quả | không — SQL sinh ra khác nhau mỗi lần |
+| debug khi sai | biết ngay tham số nào sai | phải đọc SQL sinh động, khó tái hiện |
+| bề mặt rủi ro | không có | cùng database chứa `users`, `messages`, `refresh_tokens` — cần role read-only, statement timeout, whitelist bảng |
+| sửa được chỗ nghẽn thật? | **có** | **không** |
+
+Dòng cuối là dòng quan trọng nhất. Chỗ nghẽn thật đo được là **chất lượng
+khớp tên**: `"xi măng Bút Sơn PCB40"` không khớp `"Xi măng bao Bút Sơn Xanh đa
+dụng PCB40"`. LLM sinh SQL cũng sẽ viết ra đúng cái `ILIKE '%cả cụm%'` vừa
+được thay ở §5B.6 — nó không hề chạm tới vấn đề. Cải thiện đo được là **5/16 →
+15/16**, và đến từ cách khớp, không đến từ ai viết câu SQL.
+
+Khi nào text2sql mới đáng: khi schema mở rộng nhiều bảng, có lịch sử giá nhiều
+kỳ, và người dùng hỏi những thứ không liệt kê trước được ("so sánh biến động
+giá thép HN 3 quý gần nhất theo từng nhà sản xuất"). Hiện `price_period` mới
+có một kỳ nên chưa tới ngưỡng đó.
 
 ---
 
@@ -1308,8 +1796,8 @@ cần Bearer JWT trừ auth/health.
 |---|---|---|
 | Health | `/` | `GET /health`, `/metrics` (Prometheus) |
 | Auth | `/api/v1/auth` | `POST /register`, `/login`, `/refresh`, `/logout`; OAuth Google/GitHub |
-| Knowledge Base | `/api/v1/kb` | `GET /kb`, `POST /kb`, … (4 KB hệ thống hardcode) |
-| Documents | `/api/v1/documents` | `POST /upload/{kb_id}`, `POST /upload-price/{kb_id}`, `GET /{kb_id}`, `DELETE /{document_id}` |
+| Knowledge Base | `/api/v1/kb` | `GET /kb`, `POST /kb` (nhận `price_extraction`), **`PATCH /kb/{id}`** (bật/tắt trích giá — dùng được cả với KB hệ thống), `DELETE /kb/{id}` |
+| Documents | `/api/v1/documents` | `POST /upload/{kb_id}?region=&price_period=`, `POST /upload-price/{kb_id}`, `GET /{kb_id}` (trả kèm `price_row_count`), `DELETE /{document_id}` |
 | Chat | `/api/v1/chat` | `POST /stream` (SSE), `GET /history/{conversation_id}` |
 | Research | `/api/v1/research` | deep research (LangGraph) |
 | Search | `/api/v1/search` | web search (Firecrawl) |
@@ -1331,12 +1819,42 @@ cần Bearer JWT trừ auth/health.
 
 ## 12. Cơ sở dữ liệu & Migrations
 
-### 12.1. PostgreSQL (bảng chính — `app/db/postgres/models.py`)
+### 12.1. PostgreSQL — quan hệ giữa các bảng
 
-`users`, `refresh_tokens`, `knowledge_bases`, `documents` (+`doc_metadata`
-JSONB), `conversations`, `messages` (+`sources` JSON), `research_records`,
-**`material_prices`**, `notes`, `projects` + `project_kbs` (M-N),
-`usage_records`.
+File: [app/db/postgres/models.py](../app/db/postgres/models.py)
+
+```
+users ──┬─< refresh_tokens
+        ├─< knowledge_bases ──< documents ──< material_prices
+        │        │                  │              (giá bóc từ tài liệu đó)
+        │        └──< project_kbs >──┐
+        ├─< projects ────────────────┘   (M-N: 1 project gồm nhiều KB)
+        ├─< conversations ──< messages
+        ├─< notes
+        ├─< research_records
+        └─< usage_records
+```
+
+**Ba bảng cốt lõi và vì sao chúng như vậy:**
+
+| bảng | giữ gì | điểm đáng chú ý |
+|---|---|---|
+| `knowledge_bases` | kho tri thức | `price_extraction` (bool) quyết định upload chạy pipeline nào — §1.1 |
+| `documents` | mỗi file đã nạp | `doc_metadata` **JSONB** giữ `region`/`price_period`/`price_row_count` — JSONB vì chỉ tài liệu giá mới cần các trường này, tạo cột riêng sẽ để trống ở hầu hết dòng |
+| `material_prices` | **mỗi dòng = một đơn giá** | đây là "sự thật về số" của hệ thống — §5.6 |
+
+**Vì sao cascade quan trọng:** `documents.kb_id` và
+`material_prices.document_id` đều `NOT NULL`. Không khai
+`cascade="all, delete-orphan"` thì hành vi mặc định của SQLAlchemy là *set
+NULL cho khoá ngoại của con*, vi phạm ràng buộc — xoá một KB có tài liệu sẽ
+lỗi 500. Đó là lý do các quan hệ này khai cascade tường minh.
+
+**Cạm bẫy còn tồn tại:** xoá **document** có dọn vector trong Qdrant
+(`delete_by_document`), nhưng xoá **KB** thì **không** — Postgres cascade
+không biết gì về Qdrant. Đã từng để lại 4.060 vector mồ côi trên production,
+và chúng **không vô hại**: truy hồi lọc theo `kb_id` mà payload mồ côi vẫn
+mang `kb_id` đó, nên bản cũ của tài liệu đã xoá vẫn được trả về làm trích dẫn.
+Script dọn: [purge_orphaned_vectors.py](../scripts/purge_orphaned_vectors.py).
 
 ### 12.2. Migrations (Alembic — `migrations/versions/`)
 
@@ -1349,18 +1867,30 @@ JSONB), `conversations`, `messages` (+`sources` JSON), `research_records`,
 | 0005 | usage_records |
 | 0006 | index `(conversation_id, created_at)` cho history |
 | 0007 | đổi tên 2 KB + thêm 2 KB (thành 4 KB hệ thống) |
+| **0008** | `knowledge_bases.price_extraction` — bật/tắt trích giá theo từng KB |
+| **0009** | `unaccent` + `pg_trgm` + hàm `immutable_unaccent` + index GIN cho khớp tên (§5B.6) |
 
-**4 KB hệ thống** (id cố định, `app/core/bootstrap/constants.py`): Kiến thức về
-VLXD cho kỹ sư · Dự toán giá nhà · Báo giá doanh nghiệp · Quy chuẩn & tiêu chuẩn
-VN. Chỉ **"Dự toán giá nhà"** dùng `/upload-price`; sau migrate các KB **rỗng**,
-nạp dữ liệu bằng upload thủ công (không còn auto-seed).
+Chạy: `railway ssh 'cd /app && alembic upgrade head'` hoặc
+`make migrate` ở local.
+
+**4 KB hệ thống** (id cố định, [constants.py](../app/core/bootstrap/constants.py)):
+Kiến thức về VLXD cho kỹ sư · Dự toán giá nhà · Báo giá doanh nghiệp · Quy
+chuẩn & tiêu chuẩn VN.
+
+Từ migration `0008`, **bất kỳ KB nào cũng có thể bật trích giá** — không còn
+danh sách id cố định. Vùng giá (`region`) là **bắt buộc** khi cờ bật, vì mọi
+truy vấn giá đều lọc theo nó; một dòng giá không có vùng sẽ không bao giờ được
+tìm thấy.
 
 ### 12.3. Qdrant
 
-Collection `agentic_rag_chunks` (mặc định), dense COSINE 1536 + sparse. Xoá
-document → xoá vector theo `document_id` (`delete_by_document`).
+Collection `agentic_rag_chunks`, **dense** COSINE 1536 chiều + **sparse** (khai
+báo sẵn, chưa bật BM25). Payload xem §4.1.
 
----
+Không có migration cho Qdrant — collection được tạo tự động lúc khởi động nếu
+chưa có (`ensure_collection`). Đổi `embed_dim` hoặc đổi model embedding
+**bắt buộc phải tạo lại collection và nạp lại toàn bộ**, vì vector cũ và mới
+không cùng không gian.
 
 ## 13. Khởi động & vận hành (`main.py`)
 
