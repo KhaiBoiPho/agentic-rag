@@ -804,13 +804,69 @@ cần gọi tool hay không. Nhờ vậy một câu hỏi lai — *"xi măng PCB
 nhiêu và nó khác PCB30 thế nào"* — được trả lời bằng con số từ DB **và** giải
 thích từ tài liệu, trong cùng một lượt.
 
-### 5B.6. Giới hạn hiện tại, nói thẳng
+### 5B.6. Khớp tên vật liệu — vì sao `ILIKE` không đủ
 
-- **Không dấu là không ra kết quả.** `ILIKE '%xi mang%'` trả về **0 dòng**
-  trong khi `'%xi măng%'` trả 135. Hướng sửa: `unaccent` + `pg_trgm` (cả hai
-  extension đều có sẵn trong image Postgres đang dùng và đã kiểm tra chạy
-  được: `similarity('xi mang pcb40', unaccent('Xi măng Sông Gianh PCB40'))
-  = 0.45`).
+Đây là chỗ nghẽn lớn nhất của đường tra giá, và đã được đo bằng một bộ 16 câu
+tra thực tế ([eval_price_lookup.py](../scripts/eval_price_lookup.py)).
+
+**Cách cũ** — một `material_name ILIKE '%<cả cụm>%'` — đòi các từ của người
+dùng phải **liền nhau, đúng thứ tự**. Câu hỏi thật không như vậy:
+
+```
+người dùng gõ : "xi măng Bút Sơn PCB40"
+tên trong DB   : "Xi măng bao Bút Sơn Xanh đa dụng PCB40"
+                          ^^^         ^^^^^^^^^^^^
+```
+Cùng những từ đó, nhưng bị chen `bao` và `Xanh đa dụng` vào giữa → `ILIKE`
+trả **0 dòng** trong khi dữ liệu nằm ngay đó. Gõ không dấu cũng 0 dòng.
+
+**Cách mới** (migration `0009` + `MaterialPriceRepository.lookup`):
+
+1. Tách câu tra thành **từng từ**, bỏ dấu, bỏ stopword (`giá`, `của`, `loại`…).
+2. Ứng viên phải chứa **mọi từ** (`AND`, không phải `OR`) — nghiêm ngặt như cũ,
+   nhưng cho phép từ khác chen vào giữa.
+3. Xếp hạng phần còn lại bằng `similarity()` của `pg_trgm`.
+4. Nếu **không dòng nào** chứa đủ mọi từ, **bỏ dần từ phổ biến nhất** rồi thử
+   lại — vì tên trong DB cô đọng hơn câu hỏi (`"cáp điện CXV-150"` được lưu là
+   `"CXV-150 - 0,6/1kV"`, `"xi măng Vicem Hà Tiên Xây tô"` là `"XM Vicem Hà
+   Tiên Xây tô"`), nên các từ mô tả người dùng thêm vào đơn giản là không có
+   trong tên.
+
+| | CŨ | MỚI |
+|---|---:|---:|
+| tra đúng sản phẩm ở kết quả đầu | **5/16** | **15/16** |
+
+Ca duy nhất còn trượt là `"ống nhựa uPVC"` — không có dòng uPVC nào ở Đà Nẵng,
+tức trả 0 dòng là **đúng**.
+
+#### Hai chốt an toàn, và vì sao chúng cần thiết
+
+Cả hai đều ra đời sau khi phép đo bắt được lỗi thật, không phải phòng xa.
+
+**Không bao giờ bỏ từ có chữ số.** Mã sản phẩm và kích thước (`D12`,
+`CXV-150`, `PCB40`) **chính là danh tính** của vật liệu, nhưng tần suất không
+nói lên điều đó: `d12` xuất hiện trong 49 dòng Hà Nội còn `nhat` chỉ 15. Xếp
+theo tần suất thuần tuý thì `d12` bị bỏ trước, còn lại `[viet, nhat]`, và câu
+`"thép Việt Nhật D12"` được trả lời bằng **một tấm vách kính** hiệu "kính Việt
+Nhật".
+
+**Không nới lỏng xuống dưới 2 từ.** Một từ không đủ làm danh tính:
+`"xi măng Hoàng Thạch"` (loại xi măng không có trong bảng) nới xuống còn
+`hoang` và trả về **trần nhôm Zinca Alu**. Dừng ở 2 từ khiến nó trả **0 dòng**
+— đúng hợp đồng của công cụ này: *không tìm thấy* tốt hơn *sản phẩm sai*.
+
+**Không dùng `word_similarity` làm cơ chế nới lỏng.** Đã thử và loại: với câu
+hỏi về Hà Tiên, nó xếp `"Xi măng Vicem **Hạ Long** Xây tô"` (0,742) **trên**
+`"XM Vicem **Hà Tiên** Xây tô"` (0,741) — sai thương hiệu, ở hạng nhất, kèm
+điểm số trông rất tự tin. Giữ các từ hiếm làm **bộ lọc cứng** không thể mắc
+lỗi đó: ứng viên vẫn buộc phải chứa từng từ một.
+
+Ca đối kháng đã kiểm chứng: `"xi măng Vicem Hạ Long Xây tô"` → chỉ ra Hạ Long;
+`"cáp điện CXV-240"` → chỉ ra CXV-240; `"xi măng Nghi Sơn PCB40"` (không có
+trong bảng HN) → **0 dòng**, không lấy Bút Sơn ra thay.
+
+### 5B.7. Giới hạn còn lại
+
 - **Không có tổng hợp.** Chưa có min/max/trung vị theo đơn vị, nên "giá xi
   măng khoảng bao nhiêu" chưa trả lời gọn được.
 - **`region` bắt buộc** trong schema tool, nên câu hỏi không nêu vùng sẽ bị
@@ -818,8 +874,64 @@ thích từ tài liệu, trong cùng một lượt.
 - **Không làm text2sql.** Schema chỉ có 1 bảng ~12 cột, không join: một tool
   có tham số kiểu bao phủ hết không gian truy vấn và **test được**, trong khi
   SQL do LLM sinh thì không, lại thêm bề mặt rủi ro trên cùng database chứa
-  `users`/`messages`. Chỗ nghẽn thật là **chất lượng khớp tên**, thứ mà
-  text2sql không hề chạm tới.
+  `users`/`messages`. Và như phép đo trên cho thấy, chỗ nghẽn thật là **chất
+  lượng khớp tên** — thứ mà text2sql không hề chạm tới, vì LLM sinh SQL cũng
+  sẽ viết ra đúng cái `ILIKE '%cả cụm%'` vừa được thay.
+
+### 5B.8. Đã thử và BÁC BỎ: đổi văn bản đem embed của chunk bảng
+
+Ghi lại ở đây vì kết quả âm cũng là kết quả, và để người sau khỏi thử lại.
+
+**Giả thuyết**: chunk bảng đang được embed dưới dạng **HTML**, mà HTML vừa
+nhiều nhiễu (`<td>` lặp hàng chục lần) vừa tách rời các cột — trong phụ lục Hà
+Nội, ô tên đọc là `"Xi măng bao PCB40"` còn `"Bút Sơn"` nằm ở ô **nhà sản
+xuất**, nên hai từ người dùng gõ bị 3 cột khác chen giữa. Nếu render mỗi hàng
+thành câu `"Tên: …, Đơn vị: …, Nhà sản xuất: …"` thì hai từ đó về chung một
+câu, vector sẽ khớp tốt hơn.
+
+Đo trên **2.504 chunk thật** với 16 câu hỏi khó có đáp án khách quan (chunk
+đúng = chunk chứa chuỗi mục tiêu) — [eval_table_embedding.py](../scripts/eval_table_embedding.py):
+
+| văn bản đem embed | recall@1 | @3 | @5 | @10 | MRR |
+|---|---:|---:|---:|---:|---:|
+| **HTML (đang dùng)** | **5/16** | **8/16** | 9/16 | 10/16 | **0,433** |
+| văn xuôi có nhãn cột | 4/16 | 7/16 | 9/16 | 10/16 | 0,386 |
+| bỏ thẻ, không nhãn | 5/16 | 8/16 | 10/16 | 11/16 | 0,434 |
+
+**Văn xuôi KÉM HƠN** (MRR −0,047), và còn dài hơn HTML **+10% token** khiến 17
+chunk vượt trần 8.000 token (HTML: 0 chunk). Bỏ thẻ mà không thêm nhãn thì
+ngang bằng (MRR +0,001) — nằm trong nhiễu của một bộ 16 câu.
+
+Vì sao giả thuyết sai: phép đo ban đầu chỉ so **một hàng** dạng văn xuôi với
+**cả chunk** dạng HTML (0,666 vs 0,576) — nó trộn lẫn hai thay đổi *cắt nhỏ*
+và *đổi định dạng*. Khi giữ nguyên ranh giới chunk và chỉ đổi định dạng, lợi
+ích biến mất.
+
+Cũng đã đo việc **cắt nhỏ chunk bảng**: cắt 5 hàng/chunk chỉ nâng similarity
+từ 0,576 lên 0,614, trong khi đối thủ gần nhất là 0,611 — thắng 0,003, quá
+mong manh, mà số chunk tăng ~3 lần (chi phí embedding và lưu trữ tăng theo).
+Cắt xuống 1 hàng cũng chỉ đạt 0,614, tức **trần của tìm kiếm vector cho câu
+hỏi này là ~0,61 bất kể chia chunk thế nào**.
+
+Kết luận: câu hỏi tra giá **không sửa được bằng cách chia hay định dạng
+chunk**. Đường đúng là SQL tất định (§5B.6), và số liệu ủng hộ: cùng những
+câu hỏi đó, khớp theo từ đưa tỉ lệ đúng từ 5/16 lên 15/16.
+
+### 5B.9. Đã sửa: truy hồi RAG từng chặn công cụ
+
+Ở chế độ Agentic, đoạn văn bản truy hồi được **gắn thẳng vào câu hỏi** dạng
+`"Context: …\n\nQuestion: …"`. Có khối context lớn trước mặt, model trả lời từ
+đó và **không bao giờ gọi công cụ**. Thí nghiệm đối chứng trên cùng một câu:
+
+| | công cụ được gọi? |
+|---|---|
+| `use_rag=true` | **không** — 0 lần |
+| `use_rag=false` | **có** — `lookup_material_price(...)` ngay lập tức |
+
+Tức là truy hồi đang **vô hiệu hoá** chính đường tra chính xác mà nó lẽ ra bổ
+trợ. Đã sửa: context chuyển sang một **system message riêng**, kèm chỉ dẫn nói
+rõ tư liệu **không thay thế** công cụ và chỉ được kết luận "không có dữ liệu"
+sau khi công cụ đã trả về không tìm thấy.
 
 ---
 

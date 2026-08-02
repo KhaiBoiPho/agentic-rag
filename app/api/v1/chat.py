@@ -144,6 +144,12 @@ class ChatRequest(BaseModel):
     temperature: float = 0.7
     max_tokens: int = 2048
     use_rag: bool = True
+    # Stays at 5. Widening to 10 was measured on 16 hard questions against
+    # 2.504 real chunks (scripts/eval_table_embedding.py) and recovered
+    # exactly one of them, while doubling the context every RAG turn carries.
+    # It does not rescue the price questions either — "xi măng Bút Sơn PCB40"
+    # sits at rank 11 — those are answered by lookup_material_price, not by
+    # retrieval.
     top_k: int = 5
     # 0.3 let obviously-irrelevant chunks through as "citations" (cosine
     # similarity ~0.3 is close to noise floor for text-embedding-3-small —
@@ -436,7 +442,7 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
             # it decides whether a tool call is needed at all.
             agent_kb_scope, agent_scope_name = await _resolve_rag_scope(body, str(current_user.id))
             agent_sources: list[dict] = []
-            agent_question = body.message
+            agent_ctx = ""
             if body.use_rag and agent_kb_scope:
                 try:
                     agent_chunks = await retriever.search(
@@ -460,13 +466,32 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
                     agent_ctx = "\n\n".join(
                         _format_context_chunk(i, c) for i, c in enumerate(agent_chunks)
                     )
-                    agent_question = f"Context:\n{agent_ctx}\n\nQuestion: {body.message}"
 
-            messages = [
-                {"role": "system", "content": system_prompt},
-                *agent_history,
-                {"role": "user", "content": agent_question},
-            ]
+            messages: list[dict] = [{"role": "system", "content": system_prompt}]
+            if agent_ctx:
+                # The retrieved text goes in its OWN system message, not glued
+                # onto the user's question. Prefixing the question with a
+                # "Context:" block made the model answer from that block and
+                # never reach for a tool: asked "giá xi măng Bút Sơn PCB40 ở Hà
+                # Nội", it replied "không có dữ liệu" without a single tool
+                # call, while the same question with retrieval off called
+                # lookup_material_price immediately. Retrieval was disabling
+                # the exact-lookup path it was supposed to complement.
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "Tư liệu tham khảo lấy từ kho tri thức (có thể KHÔNG chứa câu "
+                            f"trả lời):\n{agent_ctx}\n\n"
+                            "Tư liệu này KHÔNG thay thế công cụ. Với câu hỏi về ĐƠN GIÁ vật "
+                            "liệu hoặc dự toán chi phí, PHẢI gọi công cụ tương ứng — kể cả "
+                            "khi tư liệu trên trông đã đủ, và NHẤT LÀ khi tư liệu không "
+                            "nhắc tới vật liệu được hỏi. Chỉ được kết luận 'không có dữ "
+                            "liệu' sau khi công cụ đã trả về không tìm thấy."
+                        ),
+                    }
+                )
+            messages += [*agent_history, {"role": "user", "content": body.message}]
             t0 = time.perf_counter()
             final_content, tool_call_log = await run_tool_loop(messages, llm=llm, model=body.model)
             yield _sse({"type": "text", "delta": final_content, "done": False})
