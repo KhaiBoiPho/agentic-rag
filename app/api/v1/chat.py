@@ -153,6 +153,12 @@ class ChatRequest(BaseModel):
     # 0.5 is a much more honest "this chunk is actually about the query" bar.
     score_threshold: float = 0.5
     mode: str = "rag"  # "rag" | "agent" — "agent" lets the LLM call construction-cost tools
+    # Agentic mode: retrieve across EVERY knowledge base the user can see
+    # (the 4 system ones + their own) instead of a single kb_id/project_id.
+    # Resolved server-side on each request rather than sent as a list by the
+    # client, so a KB created a minute ago is included without the client
+    # having to re-sync anything.
+    all_kbs: bool = False
     form_submission: FormSubmission | None = None  # human-in-the-loop form result, see intent.py
     # True when this message's text came from STT rather than being typed.
     # Skips fixed-intent form detection (§6 README) — an inline form doesn't
@@ -161,6 +167,39 @@ class ChatRequest(BaseModel):
     # that's embarrassing in a live demo. Voice turns always go straight to
     # RAG/plain chat instead.
     via_voice: bool = False
+
+
+async def _resolve_rag_scope(
+    body: ChatRequest, user_id: str
+) -> tuple[str | list[str] | None, str | None]:
+    """Which knowledge bases this turn retrieves from, and what to call that
+    scope in the "RAG · <name>" badge.
+
+    `all_kbs` (Agentic mode) is resolved here on every request instead of the
+    client sending a list, so a knowledge base created moments ago is searched
+    without the client re-syncing anything."""
+    from app.db.postgres.repositories.kb_repo import KnowledgeBaseRepository
+
+    if body.all_kbs:
+        repo = KnowledgeBaseRepository()
+        kbs = await repo.list_system() + await repo.list_by_user(user_id)
+        if kbs:
+            return [str(kb.id) for kb in kbs], "Toàn bộ kho tri thức"
+        return None, None
+
+    if body.project_id:
+        from app.db.postgres.repositories.project_repo import ProjectRepository
+
+        project = await ProjectRepository().get(body.project_id, user_id)
+        if project and project.knowledge_bases:
+            return [str(kb.id) for kb in project.knowledge_bases], project.name
+        return body.kb_id, None
+
+    if body.kb_id:
+        kb = await KnowledgeBaseRepository().get_by_id(body.kb_id)
+        return body.kb_id, kb.name if kb else None
+
+    return body.kb_id, None
 
 
 class HistoryMessage(BaseModel):
@@ -379,11 +418,10 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
             from app.core.llm.tool_loop import run_tool_loop
 
             # Same history-as-memory pattern as the plain RAG path below —
-            # without this, every agent-mode turn (which is every turn, the
-            # frontend always sends mode="agent") starts from zero context,
-            # so a follow-up like "ở HCM thì sao" after "giá xây 100m2 ở Hà
-            # Nội" has no idea what area/finish_level it's even talking
-            # about and can't call the cost tool with inferred parameters.
+            # without it a follow-up like "ở HCM thì sao" after "giá xây
+            # 100m2 ở Hà Nội" has no idea what area/finish_level it is even
+            # talking about and can't call the cost tool with inferred
+            # parameters.
             agent_history: list[dict] = []
             if body.conversation_id:
                 try:
@@ -391,15 +429,60 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
                 except Exception:
                     agent_history = []
 
+            # Agentic mode answers from documents AND tools, not tools alone:
+            # "giá xi măng PCB40" is a material_prices lookup, but "xi măng
+            # PCB40 khác PCB30 chỗ nào" only exists in the narrative chunks.
+            # Retrieval runs first so the model has both on the table before
+            # it decides whether a tool call is needed at all.
+            agent_kb_scope, agent_scope_name = await _resolve_rag_scope(body, str(current_user.id))
+            agent_sources: list[dict] = []
+            agent_question = body.message
+            if body.use_rag and agent_kb_scope:
+                try:
+                    agent_chunks = await retriever.search(
+                        query=body.message,
+                        kb_id=agent_kb_scope,
+                        top_k=body.top_k,
+                        score_threshold=body.score_threshold,
+                    )
+                except Exception:
+                    agent_chunks = []
+                if agent_chunks:
+                    agent_sources = [
+                        {
+                            "chunk_id": c.chunk_id,
+                            "document_name": c.document_name,
+                            "content": c.content,
+                            "score": c.score,
+                        }
+                        for c in agent_chunks
+                    ]
+                    agent_ctx = "\n\n".join(
+                        _format_context_chunk(i, c) for i, c in enumerate(agent_chunks)
+                    )
+                    agent_question = f"Context:\n{agent_ctx}\n\nQuestion: {body.message}"
+
             messages = [
                 {"role": "system", "content": system_prompt},
                 *agent_history,
-                {"role": "user", "content": body.message},
+                {"role": "user", "content": agent_question},
             ]
             t0 = time.perf_counter()
             final_content, tool_call_log = await run_tool_loop(messages, llm=llm, model=body.model)
             yield _sse({"type": "text", "delta": final_content, "done": False})
-            yield _sse({"type": "text", "delta": "", "done": True, "sources": tool_call_log})
+            yield _sse(
+                {
+                    "type": "text",
+                    "delta": "",
+                    "done": True,
+                    "sources": agent_sources + tool_call_log,
+                    "rag_context": (
+                        {"kind": "kb", "name": agent_scope_name or "Kho tri thức"}
+                        if agent_sources
+                        else None
+                    ),
+                }
+            )
 
             if body.conversation_id:
                 try:
@@ -430,21 +513,7 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
                 pass
             return
 
-        search_kb_id: str | list[str] | None = body.kb_id
-        rag_scope_name: str | None = None
-        if body.project_id:
-            from app.db.postgres.repositories.project_repo import ProjectRepository
-
-            project = await ProjectRepository().get(body.project_id, str(current_user.id))
-            if project and project.knowledge_bases:
-                search_kb_id = [str(kb.id) for kb in project.knowledge_bases]
-                rag_scope_name = project.name
-        elif body.kb_id:
-            from app.db.postgres.repositories.kb_repo import KnowledgeBaseRepository
-
-            kb = await KnowledgeBaseRepository().get_by_id(body.kb_id)
-            if kb:
-                rag_scope_name = kb.name
+        search_kb_id, rag_scope_name = await _resolve_rag_scope(body, str(current_user.id))
 
         # Prior turns (last N) as conversation memory. Persisted server-side
         # (messages table) so multi-turn context survives without the client
@@ -569,11 +638,16 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
         # be credited as "RAG · <name>", same rule the form-submission path
         # already follows (see rag_ctx above).
         rag_ctx = (
-            {"kind": "project" if body.project_id else "kb", "name": rag_scope_name or "Kho tri thức"}
+            {
+                "kind": "project" if body.project_id else "kb",
+                "name": rag_scope_name or "Kho tri thức",
+            }
             if sources
             else None
         )
-        yield _sse({"type": "text", "delta": "", "done": True, "sources": sources, "rag_context": rag_ctx})
+        yield _sse(
+            {"type": "text", "delta": "", "done": True, "sources": sources, "rag_context": rag_ctx}
+        )
 
         # Persist this turn for future context (best-effort — the reply has
         # already been delivered in full above, so a write failure is

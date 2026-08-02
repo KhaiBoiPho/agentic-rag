@@ -99,7 +99,7 @@ Chunk(
 
 **Giá trị đưa đi embedding = `full_content`** = `context_above` + `\n` +
 `content` + `\n` + `context_below`. Tức chunk bảng được embedding **kèm** đoạn
-văn mô tả phía trên/dưới (đây là cơ chế "collapse/thu ngữ cảnh" — xem 2.4).
+văn mô tả phía trên/dưới (đây là cơ chế "collapse/thu ngữ cảnh" — xem §2.8).
 
 ### 2.2. Dispatcher theo đuôi file
 
@@ -130,17 +130,38 @@ cắt ngang ý.
 
 File: [pdf_chunker.py](../app/core/chunking/pdf_chunker.py)
 
-1. **Text blocks** bằng **PyMuPDF** (`page.get_text("blocks")`) — mỗi block có
-   toạ độ `y`; bỏ qua block ảnh (`b[6] != 0`).
-2. **Bảng** bằng **pdfplumber** (`page.extract_tables()`), lấy `y` từ bbox của
+**Bảng chạy trước text**, vì bbox của bảng là thứ dùng để lọc text:
+
+1. **Bảng** bằng **pdfplumber** — qua `extract_tables_resolved()` (§2.6) chứ
+   không phải `page.extract_tables()` thô. Lấy `y` và bbox từ
    `page.find_tables()`.
+2. **Text blocks** bằng **PyMuPDF** (`page.get_text("blocks")`) — mỗi block có
+   toạ độ `y`; bỏ block ảnh (`b[6] != 0`) và **bỏ block nào có tâm nằm trong
+   bbox của bảng** (`_in_any_bbox`, biên 2pt).
 3. **Trộn theo thứ tự đọc**: gộp text-block và table-block cùng trang rồi
    **sort theo `y`** (trên→dưới). Nhờ vậy bảng nằm đúng vị trí giữa các đoạn văn.
 4. **Text được gộp bằng `naive_merge`; bảng giữ nguyên là 1 chunk độc lập**
    (không trộn bảng vào text).
-5. Gắn ngữ cảnh cho bảng bằng `add_table_context`.
+5. Gắn ngữ cảnh cho bảng bằng `add_table_context` (§2.8).
 
-**Bảng → HTML** (`_table_to_html`): hàng đầu là `<th>`, còn lại `<td>`:
+**Vì sao phải lọc text theo bbox bảng.** PyMuPDF không biết vùng nào là bảng —
+nó trả chữ **bên trong** bảng ra như text block rời, thứ tự khó đoán. Không lọc
+thì nội dung bảng có mặt ở **cả hai** loại chunk, và các mảnh ô bị xáo trộn chui
+vào chunk text lân cận lẫn `context_above/below` của chính chunk bảng. Ví dụ
+thật (trang 69 file `BangGia-VatTuDien-DaNang`): PyMuPDF trả 12 block, 10 block
+nằm trong bbox bảng — trong đó có
+`'27 Cồn Dầu 2, Phường Hòa Xuân, TP Đà Nẵng 4.446.000'` (một địa chỉ dính liền
+một cái giá). Sau khi lọc chỉ còn 2 block header/footer trang. Trên toàn bộ 10
+PDF nguồn: **3.163 → 1.195 chunk** (−62%), số chunk bảng không đổi (795).
+
+**`page_num` lấy theo section đầu tiên.** `flush_text()` dùng
+`naive_merge_with_origins()` ([base.py](../app/core/chunking/base.py)) — trả về
+`(text, origin_idx)` — nên mỗi chunk text mang trang của section **đầu tiên**
+góp vào nó. Buffer text có thể trải vài trang trước khi gặp bảng; gán tất cả
+theo trang cuối cùng nhìn thấy sẽ đẩy trích dẫn đi xa hàng chục trang.
+
+**Bảng → HTML** (`_table_to_html`): hàng header là `<th>` (nếu xác định được —
+xem §2.7), còn lại `<td>`:
 ```html
 <table>
 <tr><th>Tên vật liệu</th><th>Đơn vị</th><th>Giá</th></tr>
@@ -150,7 +171,180 @@ File: [pdf_chunker.py](../app/core/chunking/pdf_chunker.py)
 ```
 Giữ HTML (thay vì flatten) để bảo toàn quan hệ hàng–cột khi model đọc.
 
-### 2.6. Gắn ngữ cảnh cho chunk bảng — `add_table_context` (collapse context)
+### 2.6. Ô gộp và ký hiệu lặp — `table_extract.py`
+
+File: [table_extract.py](../app/core/chunking/table_extract.py). **Dùng chung
+cho cả chunker RAG và extractor giá có cấu trúc (§5)** để hai đường nhìn thấy
+cùng một lưới.
+
+**Vấn đề.** `page.extract_tables()` chỉ đặt chữ của ô gộp theo chiều dọc vào
+**hàng mà ô đó bắt đầu**, mọi hàng tiếp theo trả rỗng. Trong phụ lục vật tư điện
+Đà Nẵng, ô "Tiêu chuẩn kỹ thuật" gộp suốt một họ sản phẩm → chỉ **1/12** mẫu đèn
+dính với `"CE, ENEC, IEC60598-2-3, RoHS…"`. Câu hỏi *"tiêu chuẩn RoHS áp dụng
+cho vật liệu nào"* truy hồi được đúng chunk, nhưng trong chunk chỉ thấy một sản
+phẩm có tiêu chuẩn → model lấp chỗ trống bằng kiến thức chung, trả lời sai.
+
+#### Ví dụ hình dung — một bảng thu nhỏ
+
+Bảng như mắt người nhìn thấy trên trang PDF:
+
+```
+        cột0   cột1               cột2      cột3                   cột4        cột5
+       ┌─────┬──────────────────┬─────────┬──────────────────────┬───────────┬───────────┐
+hàng0  │ TT  │ TÊN VẬT LIỆU     │ ĐƠN VỊ  │ TIÊU CHUẨN KỸ THUẬT  │ GHI CHÚ   │ GIÁ BÁN   │
+       ├─────┼──────────────────┼─────────┼──────────────────────┼───────────┼───────────┤
+hàng1  │  1  │ DHP-STR02A 30W   │ đ/bộ    │                      │ Hàng đặt  │ 4.446.000 │
+       ├─────┼──────────────────┼─────────┤                      ├───────────┼───────────┤
+hàng2  │  2  │ DHP-STR02A 40W   │    -    │   CE, ENEC,          │           │ 5.087.250 │
+       ├─────┼──────────────────┼─────────┤   IEC60598-2-3,      ├───────────┼───────────┤
+hàng3  │  3  │ DHP-STR02A 50W   │    -    │   RoHS               │           │ 5.785.500 │
+       ├─────┼──────────────────┼─────────┤                      ├───────────┼───────────┤
+hàng4  │  4  │ DHP-STR02A 60W   │    -    │                      │           │ 6.184.500 │
+       └─────┴──────────────────┴─────────┴──────────────────────┴───────────┴───────────┘
+```
+
+Hai cột dưới đây là mấu chốt, và chúng **ngược nhau** dù ở hàng 2 đều trông
+"trống":
+
+- **cột3 (TIÊU CHUẨN)** — giữa hàng 1→4 **không có đường kẻ ngang nào**. Đó là
+  **một ô duy nhất cao bằng 4 hàng**; chữ căn giữa nên trông như thuộc hàng 2–3.
+  Hàng 2 trống vì **tiêu chuẩn RoHS vẫn đang áp dụng cho nó**.
+- **cột4 (GHI CHÚ)** — **có** đường kẻ ngang giữa mọi hàng: **4 ô riêng biệt**,
+  3 ô dưới rỗng. Hàng 2 trống vì **nó thật sự không có ghi chú** ("Hàng đặt" chỉ
+  áp cho hàng 1).
+
+`grid = table.extract()` — **chỉ có chữ, mất thông tin đường kẻ**:
+
+```python
+['TT', 'TÊN VẬT LIỆU',   'ĐƠN VỊ', 'TIÊU CHUẨN KỸ THUẬT',          'GHI CHÚ',  'GIÁ BÁN'  ]
+['1',  'DHP-STR02A 30W', 'đ/bộ',   'CE, ENEC, IEC60598-2-3, RoHS', 'Hàng đặt', '4.446.000']
+['2',  'DHP-STR02A 40W', '-',      '',                             '',         '5.087.250']
+['3',  'DHP-STR02A 50W', '-',      '',                             '',         '5.785.500']
+['4',  'DHP-STR02A 60W', '-',      '',                             '',         '6.184.500']
+```
+
+`grid[2][3]` và `grid[2][4]` **đều là `''`** — nhìn vào lưới chữ không thể phân
+biệt "trống vì bị ô gộp phủ" với "trống thật".
+
+`rows = table.rows` — **thông tin đường kẻ, thứ vừa bị mất**:
+
+```
+rows[0].cells = [ ▭ ,  ▭ ,  ▭ ,   ▭    ,  ▭ ,  ▭ ]
+rows[1].cells = [ ▭ ,  ▭ ,  ▭ ,  ▭▭▭▭  ,  ▭ ,  ▭ ]   ← ô cột3 CAO GẤP 4 HÀNG
+rows[2].cells = [ ▭ ,  ▭ ,  ▭ ,  None  ,  ▭ ,  ▭ ]
+rows[3].cells = [ ▭ ,  ▭ ,  ▭ ,  None  ,  ▭ ,  ▭ ]
+rows[4].cells = [ ▭ ,  ▭ ,  ▭ ,  None  ,  ▭ ,  ▭ ]
+                                   ▲       ▲
+                                   │       └─ cột4: LUÔN có ô thật (chỉ là rỗng)
+                                   └───────── cột3: không có ô nào bắt đầu ở đây,
+                                              vì ô của hàng1 đã phủ xuống
+```
+
+`None` **không** có nghĩa "ô rỗng". Nó có nghĩa **"vị trí này không phải một ô —
+nó là phần thân của ô phía trên"**. Đó chính là thứ phân biệt được hai cột mà
+lưới chữ không phân biệt nổi.
+
+**Cách giải — dựa vào hình học, không đoán chuỗi.** `_resolve()` duyệt từ trên
+xuống, giữ mảng `last[cột]` = giá trị gần nhất từng thấy ở cột đó:
+
+| ô | `extract()` | `rows[r].cells[c]` | `_resolve()` làm gì |
+|---|---|---|---|
+| thân của ô gộp | `''` | `None` | lấy `last[c]` (giá trị gần nhất ở cột đó) |
+| ô rỗng thật (có viền) | `''` | bbox | **giữ rỗng**, và `last[c] = ''` |
+| ô có chữ | chữ | bbox | giữ nguyên, cập nhật `last[c]` |
+
+Áp vào ví dụ trên:
+
+| hàng | cột | chữ trong `grid` | hình học | quyết định |
+|---|---|---|---|---|
+| 1 | 3 | `'CE, ENEC…'` | ô thật | giữ, `last[3] = 'CE, ENEC…'` |
+| 2 | 3 | `''` | **`None`** | → **`'CE, ENEC…'`** |
+| 3 | 3 | `''` | **`None`** | → **`'CE, ENEC…'`** |
+| 4 | 3 | `''` | **`None`** | → **`'CE, ENEC…'`** |
+| 1 | 4 | `'Hàng đặt'` | ô thật | giữ, `last[4] = 'Hàng đặt'` |
+| 2 | 4 | `''` | **ô thật** | **giữ rỗng**, `last[4] = ''` |
+| 3–4 | 4 | `''` | ô thật | giữ rỗng |
+
+Kết quả — cột3 điền đủ, cột4 vẫn rỗng, đúng như bảng gốc:
+
+```python
+['1', 'DHP-STR02A 30W', 'đ/bộ', 'CE, ENEC, IEC60598-2-3, RoHS', 'Hàng đặt', '4.446.000']
+['2', 'DHP-STR02A 40W', '-',    'CE, ENEC, IEC60598-2-3, RoHS', '',         '5.087.250']
+['3', 'DHP-STR02A 50W', '-',    'CE, ENEC, IEC60598-2-3, RoHS', '',         '5.785.500']
+['4', 'DHP-STR02A 60W', '-',    'CE, ENEC, IEC60598-2-3, RoHS', '',         '6.184.500']
+```
+
+Nếu chỉ làm *"ô nào rỗng thì copy dòng trên"* — không nhìn hình học — thì cột3
+vẫn đúng, nhưng **cột4 cũng bị điền `'Hàng đặt'` cho cả 4 hàng**: tự bịa ra ghi
+chú cho 3 sản phẩm không hề có. Với bảng giá vật liệu, các cột "Ghi chú",
+"Điều kiện thương mại", "Vận chuyển" đều là loại thông tin chỉ áp cho **một**
+dòng cụ thể, nên sai kiểu này là bịa dữ liệu không có trong tài liệu.
+
+#### Ký hiệu lặp (ditto)
+
+Dạng chữ của cùng ý "như trên": `-nt-`, `nt`, `-//-`, `"`, `''`, `như trên` →
+bung ra thành giá trị phía trên. Dấu `-` trần **cố ý không** coi là ditto ở tầng
+này (nó cũng có nghĩa "không áp dụng"); chỉ extractor giá resolve nó **trong cột
+đơn vị**, nơi `-` không thể là đơn vị hợp lệ (`is_unit_ditto`).
+
+#### Hai API
+
+`extract_tables_resolved(page)` trả lưới đã điền; `extract_tables_with_raw(page)`
+trả kèm lưới **chưa điền**. Bên gọi nào phân loại dòng theo *độ rỗng* thì bắt
+buộc dùng bản raw — dòng tiêu đề nhóm vật liệu được nhận ra nhờ "gần như mọi ô
+đều rỗng", mà sau khi điền nó thừa hưởng đơn vị, tiêu chuẩn và cả **tên vật
+liệu** của họ phía trên, trông hệt một dòng dữ liệu bình thường (§5.4).
+
+#### Giới hạn còn lại
+
+Nếu ô gộp bắt đầu *dưới* dòng đầu của khối (chữ căn giữa, đường kẻ cắt ngay dưới
+dòng đầu) thì dòng đầu có ô riêng rỗng thật và không được điền. Trên khối đèn
+CDE: 12/13 dòng có tiêu chuẩn thay vì 1/13. Không điền ngược lên vì đó là suy
+đoán, không phải hình học.
+
+### 2.7. Header của bảng nối trang — `_resolve_header`
+
+pdfplumber bóc **một bảng cho mỗi trang**. Phụ lục Hà Nội quý II/2026 cho đúng
+**700 chunk bảng trên 699 trang** — tức 1 trang = 1 bảng, gần như tuyệt đối; một
+bảng giá dài 699 trang về thành 699 bảng rời. Không xử lý thì dòng dữ liệu đầu
+tiên của **mọi** trang tiếp theo bị gán `<th>` — nói với model rằng `12.883.415`
+là tên một cột.
+
+`_resolve_header(grid, prev_header, prev_ncol)` xét theo thứ tự:
+
+1. Dòng đầu **trùng** header bảng trước → header lặp lại bình thường.
+2. **Cùng số cột** nhưng dòng đầu rõ ràng là dữ liệu → trang nối tiếp: **mượn
+   header trang trước**, toàn bộ dòng trang này là `<td>`.
+3. Dòng đầu **trông như header** → header mới.
+4. Không rơi vào nhánh nào → **không phát `<th>`**. Gán nhầm một dòng sản phẩm
+   thành nhãn cột tệ hơn là không có nhãn.
+
+Ví dụ thật, bảng trang 69 của `BangGia-VatTuDien-DaNang`:
+
+```
+dòng đầu bảng TRANG 1 : ['TT', 'TÊN VẬT LIỆU, LO…', 'ĐƠN VỊ', 'TIÊU CHUẨN KỸ TH…', …]
+   _looks_like_header -> True                      → header mới
+
+dòng đầu bảng TRANG 69: ['', 'Đèn Led thanh CDE-SL13…', '-', '', '', '12.883.415']
+   _looks_like_header -> False  (không có nhãn cột nào)
+   => cùng 6 cột với header đang giữ → MƯỢN header trang trước,
+      dòng này thành <td>, không phải <th>
+```
+
+`_looks_like_header()` đòi: ≥2 ô có chữ, không ô nào dài quá 60 ký tự, không ô
+nào là số tiền thuần, **và** có ít nhất một nhãn cột quen thuộc (`_HEADER_LABELS`:
+`stt`, `tên`, `đơn vị`, `giá`, `tiêu chuẩn`, `nhà sản xuất`, `ghi chú`…). Điều
+kiện cuối là thứ phân biệt header thật với **dòng tiêu đề nhóm vật liệu** — cả
+hai đều ngắn, thuần chữ, không có giá, nên hình dạng không đủ để tách.
+
+Kết quả trên `BangGia-VatTuDien-DaNang` (89 chunk bảng): 78 chunk có header
+đúng, 11 chunk không header — thà không có nhãn cột còn hơn nhãn sai. Trong dữ
+liệu nạp bằng bản cũ, phụ lục Hà Nội có 10/700 chunk mà `<th>` là một dòng dữ
+liệu, ví dụ trang 498: `<th>11</th><th></th><th>Công ty cổ phần khoa học công
+nghệ Việt Nam</th>…` — chunk đó mất hoàn toàn thông tin cột (không biết cột nào
+là giá, cột nào là đơn vị).
+
+### 2.8. Gắn ngữ cảnh cho chunk bảng — `add_table_context` (collapse context)
 
 `base.py:add_table_context()`. Với mỗi chunk bảng, đi **ngược lên** thu các
 chunk text liền trước tới khi đủ `table_context_size` (128) token → `context_above`;
@@ -159,7 +353,18 @@ chunk text liền trước tới khi đủ `table_context_size` (128) token → 
 "đây là bảng gì, điều kiện giá ra sao" — đoạn văn bao quanh bù lại điều đó khi
 embedding và khi model đọc chunk.
 
-### 2.7. Chunk quá khổ (bảng rộng) — tách theo hàng
+Cơ chế này **phụ thuộc vào việc lọc text theo bbox ở §2.5**: chỉ khi các mảnh ô
+bảng đã bị loại khỏi luồng text thì `context_above/below` mới là văn bản thật.
+Trước khi có bộ lọc, chunk bảng của phụ lục Hà Nội nhận `context_above` là
+`"nối mặt bích / tiêu chuẩn / EN 1092-2… / Y lọc gang FAF 2500 DN50 / cái /
+DN50 / FAF / Thổ Nhĩ Kỳ / 3.859.200 / …"` — các ô của **chính bảng đó** bị
+PyMuPDF trả về rời rạc và xáo trộn. Nguy hiểm hơn nhiễu thuần tuý: con số
+`3.859.200` (của DN50) nằm trong `context_above` trong khi hàng thật trong
+`<table>` là DN65 với ô giá trống, rất dễ khiến model gán sai giá cho sản phẩm.
+Với phụ lục gần như toàn bảng (không có đoạn văn xen kẽ), `context_above/below`
+nay thường chỉ còn header/footer trang hoặc rỗng — đúng và vô hại, thay vì sai.
+
+### 2.9. Chunk quá khổ (bảng rộng) — tách theo hàng
 
 `base.py:split_oversized_table_chunk()`. API embedding
 (`text-embedding-3-small`) trần 8191 token; **một chunk quá khổ làm hỏng cả
@@ -171,12 +376,12 @@ lô**. Nếu `token_count > MAX_EMBED_TOKENS (8000)` và là **TABLE**:
   Qdrant, ghi `logger.warning` (dữ liệu giá có cấu trúc **không bị ảnh hưởng** vì
   đi đường trích riêng — xem §5).
 
-### 2.8. DOCX
+### 2.10. DOCX
 
 [docx_chunker.py](../app/core/chunking/docx_chunker.py): duyệt body XML theo thứ
 tự DOM, `p`→text, `tbl`→HTML; text gộp `naive_merge`, bảng độc lập + gắn context.
 
-### 2.9. Text / Markdown
+### 2.11. Text / Markdown
 
 [text_chunker.py](../app/core/chunking/text_chunker.py):
 - `.md`: **cắt tại mỗi heading** (`^#{1,6}`), forward-fill marker
@@ -184,7 +389,7 @@ tự DOM, `p`→text, `tbl`→HTML; text gộp `naive_merge`, bảng độc lậ
   chunk_id** để trích dẫn bám đúng mục nguồn.
 - `.txt`: cắt theo đoạn (dòng trống) rồi `naive_merge`.
 
-### 2.10. OCR fallback cho PDF scan
+### 2.12. OCR fallback cho PDF scan
 
 [ocr_fallback.py](../app/core/ingestion/ocr_fallback.py). Nếu PdfChunker trả **0
 chunk** (PDF chỉ là ảnh scan, không có lớp text) → render **mỗi trang** thành ảnh
@@ -202,7 +407,7 @@ async generator, phát event tiến độ (`parsing 0.1 → chunking 0.3 → emb
 
 1. Tạo record document (`status=processing`).
 2. Chunk (dispatcher) → nếu 0 chunk và là PDF → **OCR fallback**.
-3. Tách chunk quá khổ (§2.7).
+3. Tách chunk quá khổ (§2.9).
 4. **Embedding theo lô** `embed_batch_size=32`: mỗi lô gọi `llm.embed([full_content...])`.
 5. **Upsert Qdrant** (§4).
 6. `status=done`, `chunk_count=total`. Đo `INGESTION_CHUNK_COUNT`, `INGESTION_DURATION`.
@@ -283,11 +488,36 @@ hay `vendor_quote` (báo giá doanh nghiệp). Ảnh hưởng thứ tự ưu ti�
 - Yêu cầu tối thiểu: có cột **tên** và **đơn vị** và **ít nhất 1 cột giá**, nếu
   không → bỏ bảng (ghi warning).
 
+Ngoài ra còn dò cột **tiêu chuẩn kỹ thuật** (`_SPEC_KEYWORDS` → `spec`) và **nhà
+sản xuất** (`_MANUFACTURER_KEYWORDS` → `manufacturer`). Hai cột này hầu như luôn
+là ô gộp trải cả họ sản phẩm nên chỉ đọc được **sau khi** §2.6 điền ô gộp; trước
+đó hai trường trong `material_prices` luôn `NULL`.
+
 ### 5.4. Đọc dòng dữ liệu (`_parse_data_rows`)
 
-- **Forward-fill nhóm vật liệu**: hàng "group header" (ô đơn vị trống, ≤2 ô có
-  chữ, ô category/name mang tên nhóm như "I | XI MĂNG | | |") → cập nhật
-  `current_category` cho các dòng sau (mô phỏng merged-cell).
+Lưới đầu vào lấy từ `extract_tables_with_raw(page)` (§2.6) — **cả bản đã điền ô
+gộp lẫn bản gốc**, vì mỗi bản trả lời một câu hỏi khác nhau.
+
+- **Nhận diện hàng "group header"** (tên nhóm vật liệu như `"I | XI MĂNG | | |"`)
+  → cập nhật `state.category` cho các dòng sau. Xét **trên lưới GỐC**: sau khi
+  điền ô gộp, hàng này thừa hưởng đơn vị, tiêu chuẩn và cả **tên vật liệu** của
+  họ phía trên, trông hệt một dòng dữ liệu bình thường → đọc nhầm sẽ đẻ ra một
+  sản phẩm có giá **không tồn tại** trong tài liệu. Nhãn nhóm được lấy từ bất kỳ
+  cột nào chứa nó — một số phụ lục đặt nó ở **cột TT**, không phải cột tên.
+- **`-` và `-nt-` ở cột đơn vị** → resolve về đơn vị gần nhất (`is_unit_ditto`).
+  Khối báo giá nhà cung cấp ghi đơn vị một lần rồi để `-` cho mọi dòng sau; lưu
+  nguyên `unit='-'` khiến giá hiển thị thành `4.250.000 đ/-` và vô hiệu bộ lọc
+  `unit` của `lookup_material_price` (§5.6). Ở KB hiện tại, **2.026/10.010 dòng**
+  đang mang `unit='-'` do dữ liệu nạp bằng bản cũ.
+- **Chặn nhãn nhóm tràn sang nhóm mới**: khi số thứ tự (STT) **về lại 1** mà chưa
+  có hàng group-header nào cho nhóm đó → xoá `category`/`manufacturer` thay vì kế
+  thừa của nhóm trước (`state.heading_unclaimed`). Trước khi có cơ chế này, 47
+  mẫu đèn CDE VINA bị xếp vào nhóm `"Cáp vặn xoắn hạ thế"`, khiến
+  `lookup_material_price(material_category="đèn led")` trả về rỗng.
+- **`manufacturer` chỉ nhận giá trị trông như tên tổ chức** (`_looks_like_org`).
+  Cột "NHÀ SẢN XUẤT/ GHI CHÚ" trộn tên công ty với địa chỉ, số điện thoại và ghi
+  chú giao hàng ở các dòng bên dưới; chỉ dòng đầu là tên. Giá trị đang giữ được
+  dùng tiếp cho các dòng sau cho tới khi gặp tên tổ chức mới.
 - Collapse xuống dòng trong tên/nhóm (`"Đá xây\ndựng"` → `"Đá xây dựng"`) để
   ILIKE lookup khớp.
 - Một dòng có thể sinh **nhiều** `MaterialPriceRow` nếu có nhiều cột giá (giá tại
@@ -300,9 +530,15 @@ hay `vendor_quote` (báo giá doanh nghiệp). Ảnh hưởng thứ tự ưu ti�
 ### 5.5. Bảng trải nhiều trang (continuation)
 
 `extract_price_rows`. Một phụ lục có thể là **1 bảng dài 128 trang** không lặp
-header. Cơ chế: **giữ lại column-mapping và `current_category`** từ trang cuối
-CÓ header; trang sau **không có header nhưng cùng số cột** → coi là tiếp nối. Số
-cột khác → là bảng/section khác, **không tái dùng** mapping (tránh đọc nhầm cột).
+header. Cơ chế: **giữ lại column-mapping và `_ParseState`** (nhóm vật liệu, đơn
+vị, nhà sản xuất đang hiệu lực) từ trang cuối CÓ header; trang sau **không có
+header nhưng cùng số cột** → coi là tiếp nối. Số cột khác → là bảng/section
+khác, **không tái dùng** mapping (tránh đọc nhầm cột).
+
+> **Đo trên 10 PDF nguồn** (`seed_data/prices/`), so bản trước và sau khi dùng
+> chung `table_extract`: dòng giá trích được **10.010 → 10.748** (+738), cảnh báo
+> **633 → 154** (−76%), tổng chunk **3.163 → 1.195** (−62%, do hết text trùng),
+> số chunk bảng giữ nguyên 795.
 
 ### 5.6. Bảng `material_prices` (Postgres)
 
@@ -316,6 +552,218 @@ kèm các row giá (`cascade="all, delete-orphan"`).
 > pdfplumber), upload qua `/upload-price` với `region` đúng. File `.md`/`.txt`
 > hay PDF scan không bảng **không** sinh row giá (nhưng vẫn thành chunk RAG nếu
 > upload thường).
+
+---
+
+## 5B. Từ PDF tới câu trả lời — luồng đầy đủ, kèm ví dụ
+
+Mục này trả lời trọn vẹn hai câu hỏi hay bị đặt ra khi bảo vệ: **hệ thống bóc
+giá từ PDF vào database bằng cách nào**, và **khi người dùng hỏi thì con số
+được lấy ra bằng đường nào, tại sao không để RAG tự trả lời**.
+
+### 5B.1. Vì sao không dùng RAG thuần cho con số giá
+
+RAG trả lời bằng cách nhét vài đoạn văn bản gần nghĩa nhất vào prompt rồi để
+model tự đọc. Với **văn xuôi** thì tốt. Với **một con số tiền** thì ba điểm
+yếu sau là cố hữu, không phải do chỉnh tham số chưa khéo:
+
+**1. Tương đồng ngữ nghĩa không phân biệt được sản phẩm gần giống nhau.**
+"Xi măng PCB40" và "Xi măng PCB30" khác nhau đúng một ký tự và cách nhau
+khoảng 200.000 đ/tấn. Vector của hai chuỗi đó gần như trùng nhau. Truy hồi
+top-k không có cơ chế nào để nói "hai cái này khác nhau về giá".
+
+**2. Con số và tên vật liệu có thể lệch hàng trong cùng một chunk.** Đây là
+lỗi đã xảy ra thật trong hệ thống này. Chunk `01509092…` (phụ lục Hà Nội,
+trang 275) có hàng **DN65** với ô giá **trống**, trong khi con số
+`3.859.200` — giá của **DN50** ở trang trước — lại nằm trong `context_above`
+của chính chunk đó. Model đọc chunk ấy rất dễ gán 3.859.200 cho DN65. §2.5
+và §2.6 đã sửa nguyên nhân, nhưng rủi ro dạng này không bao giờ về 0 với
+bảng dài, ô gộp, cắt trang.
+
+**3. RAG không tổng hợp được.** "Giá xi măng thấp nhất ở Hà Nội là bao
+nhiêu", "có bao nhiêu loại thép trong công bố quý này" — không có phép
+`MIN()`, `COUNT()` nào trong tìm kiếm vector. Nó chỉ lấy về k đoạn rồi thôi.
+
+Bằng chứng bằng số trên chính dữ liệu này (10.010 dòng giá):
+
+| truy vấn | số dòng khớp | khoảng giá |
+|---|---|---|
+| `ILIKE '%xi măng%'` | 135 (HN 83, DN 52) | 1.400 → 4.766.000 |
+| `ILIKE '%thép%'` | 512 | 3 → 210.000.000 |
+
+Chênh 3.400 lần trong cùng một truy vấn, vì trộn đơn vị (`đ/tấn` với `đ/kg`)
+và trộn mác/thương hiệu. Một câu "giá xi măng bao nhiêu" **không có một đáp
+án duy nhất** — nó là 135 sản phẩm. RAG sẽ chọn đại một đoạn và trả lời như
+thể đó là đáp án.
+
+> **Nguyên tắc của hệ thống:** RAG lo phần **chữ** (điều kiện giá, phạm vi áp
+> dụng, đã gồm VAT chưa, tiêu chuẩn kỹ thuật). SQL tất định lo phần **số**.
+> Một match sai vật liệu → sai dự toán công trình, nên chỗ nào cần chính xác
+> thì không giao cho tìm kiếm xấp xỉ.
+
+### 5B.2. Nửa thứ nhất — PDF vào database (lúc nạp tài liệu)
+
+```
+người dùng bấm Upload trên trang KB
+   │
+   ├─ POST /api/v1/documents/upload/{kb_id}?region=HN&price_period=2026-06
+   │     │
+   │     └─ đọc knowledge_bases.price_extraction  ─── false ──→ pipeline thường
+   │                     │                                       (chỉ chunk → Qdrant)
+   │                   true
+   │                     │  region rỗng?  ──→ 400, chặn ngay tại API
+   │                     ▼
+   ├─ RabbitMQ  {mode: "price_extraction", config: {region, price_period}}
+   │
+   └─ consumer → PriceExtractionPipeline.ingest_stream()
+          │
+          ├── NHÁNH A: chunk → embed → Qdrant          (phần chữ, cho RAG)
+          │      §2.5–2.9; mỗi chunk gắn metadata {region, source_type, price_period}
+          │
+          └── NHÁNH B: extract_price_rows()             (phần số, cho SQL)
+                 │
+                 ├─ iter_price_tables(content, filename)   §5B.3
+                 │     .pdf  → pdfplumber + giải ô gộp (§2.6)
+                 │     .docx → python-docx
+                 │     .md   → bảng markdown + dọn LaTeX
+                 │
+                 ├─ _detect_header()      → cột nào là tên / đơn vị / giá / tiêu chuẩn / NSX
+                 ├─ _parse_data_rows()    → từng dòng thành MaterialPriceRow
+                 └─ bulk_create()         → INSERT vào material_prices
+                          │
+                          └─ set_metadata(doc, {price_row_count, warning_count})
+                                   └─→ UI hiện badge "27 dòng giá" / "0 dòng giá"
+```
+
+**Hai nhánh chạy trên cùng một file, độc lập nhau.** Một công văn không có
+bảng giá vẫn ra 20 chunk RAG và 0 dòng giá — đó là kết quả đúng, không phải
+lỗi nạp. Một phụ lục 699 trang ra 700 chunk bảng **và** 6.626 dòng giá.
+
+### 5B.3. Bóc một dòng giá — ví dụ cụ thể
+
+Nguồn: `HaNoi-PhuLuc-BangGiaVLXD-QuyII-2026.pdf`, trang 15.
+
+**Bước 1 — lưới thô từ pdfplumber** (ô gộp chỉ có chữ ở dòng đầu):
+
+```python
+['1', 'Xi măng Bút Sơn PCB40', 'tấn', 'TCVN 6260:2020', 'Bút Sơn', '', '1.520.000']
+['2', 'Xi măng Bút Sơn PCB30', '-',   '',                '-nt-',    '', '1.430.000']
+```
+
+**Bước 2 — sau `_resolve()`** (§2.6: ô gộp điền xuống theo hình học, `-nt-`
+bung ra):
+
+```python
+['1', 'Xi măng Bút Sơn PCB40', 'tấn', 'TCVN 6260:2020', 'Bút Sơn', '', '1.520.000']
+['2', 'Xi măng Bút Sơn PCB30', '-',   'TCVN 6260:2020', 'Bút Sơn', '', '1.430.000']
+```
+
+**Bước 3 — `_detect_header()` xác định cột:**
+
+```
+name_col=1  unit_col=2  spec_col=3  manufacturer_col=4  price_generic_col=6
+```
+
+**Bước 4 — `_parse_data_rows()` xử lý dòng 2:**
+
+- `unit = '-'` → `is_unit_ditto()` → lấy đơn vị gần nhất → `'tấn'`
+- `price = _parse_price('1.430.000')` → `1430000.0` (dấu `.` là phân cách nghìn)
+- `manufacturer` giữ `'Bút Sơn'` (đã bung từ `-nt-`)
+
+**Bước 5 — dòng nằm trong DB:**
+
+```sql
+INSERT INTO material_prices
+  (region, material_category, material_name,          unit,  price_ex_vat,
+   price_basis, source_type,      price_period, spec,             manufacturer, ...)
+VALUES
+  ('HN',   'Xi măng',         'Xi măng Bút Sơn PCB30','tấn', 1430000.00,
+   'khong_ro',  'official_annex', '2026-06',    'TCVN 6260:2020', 'Bút Sơn', ...);
+```
+
+### 5B.4. Nửa thứ hai — từ câu hỏi tới con số
+
+Ví dụ người dùng gõ, ở chế độ **Agentic**:
+
+> **"Giá xi măng PCB40 ở Hà Nội bao nhiêu một tấn?"**
+
+```
+1. POST /api/v1/chat/stream
+      body = { message: "...", mode: "agent", all_kbs: true, use_rag: true }
+
+2. Guard chủ đề (sub-model rẻ) — đúng chủ đề VLXD → đi tiếp
+
+3. _resolve_rag_scope(all_kbs=true)
+      → [4 KB hệ thống + mọi KB người dùng]        (KB tạo 1 phút trước cũng có)
+
+4. Truy hồi RAG trên toàn bộ KB đó
+      → vài chunk văn bản: "giá công bố chưa gồm VAT", "áp dụng quý II/2026"…
+      → nhét vào prompt dưới dạng Context
+
+5. run_tool_loop()  — LLM nhìn thấy 2 công cụ:
+      • lookup_material_price(region, material_category, material_name)
+      • calculate_construction_cost(floor_area_m2, region, project_type, finish_level)
+
+6. LLM tự quyết định gọi:
+      lookup_material_price({region: "HN", material_name: "xi măng PCB40"})
+
+7. handle_lookup_material_price → MaterialPriceRepository.lookup()
+      SELECT * FROM material_prices
+      WHERE region = 'HN'
+        AND material_name ILIKE '%xi măng PCB40%'
+      ORDER BY price_period DESC NULLS LAST, created_at DESC
+      LIMIT 10;
+
+8. Kết quả trả về cho LLM dưới dạng bảng markdown, role="tool":
+      | Vật liệu | Đơn giá | Điều kiện giao | Kỳ | Nguồn |
+      | Xi măng Bút Sơn PCB40 (TCVN 6260:2020) | **1.520.000 đ**/tấn | không rõ | 2026-06 |
+        phụ lục công bố Sở Xây dựng — Bút Sơn |
+
+9. LLM đọc kết quả tool + Context RAG rồi soạn câu trả lời cuối:
+      "Xi măng Bút Sơn PCB40 ở Hà Nội quý II/2026: 1.520.000 đ/tấn (chưa VAT)…"
+
+10. SSE trả về: sources = [chunk RAG…] + [tool_call_log…]
+      → UI hiện badge "RAG · Toàn bộ kho tri thức" và chip nguồn
+```
+
+**Điểm mấu chốt ở bước 7:** không có tìm kiếm vector nào tham gia vào việc
+lấy con số. `1.520.000` đi thẳng từ ô trong PDF → `material_prices` → `SELECT`
+→ câu trả lời. Model **không tự sinh** con số đó, nó chỉ đọc lại và diễn giải.
+Nếu không có dòng nào khớp, tool trả về nguyên văn *"Không tìm thấy giá cho
+vùng=…, name=… — Không suy đoán giá"* và model buộc phải nói không có dữ
+liệu, thay vì đoán.
+
+### 5B.5. Khi nào KHÔNG dùng tool — RAG vẫn là đường đúng
+
+| Câu hỏi | Đường xử lý | Vì sao |
+|---|---|---|
+| "Giá xi măng PCB40 ở HN?" | tool → SQL | cần con số chính xác |
+| "Xây 100 m² ở HN hết bao nhiêu vật liệu?" | tool `calculate_construction_cost` → SQL nhiều lần | cần khối lượng × đơn giá |
+| "PCB40 khác PCB30 chỗ nào?" | RAG | kiến thức, không phải số |
+| "Tiêu chuẩn RoHS áp dụng cho vật liệu nào?" | RAG | quan hệ trong bảng, đọc từ chunk |
+| "Giá công bố đã gồm VAT chưa?" | RAG | điều kiện áp dụng, nằm trong văn bản |
+
+Chế độ **Agentic** chạy cả hai: truy hồi RAG trước, rồi để LLM tự quyết có
+cần gọi tool hay không. Nhờ vậy một câu hỏi lai — *"xi măng PCB40 giá bao
+nhiêu và nó khác PCB30 thế nào"* — được trả lời bằng con số từ DB **và** giải
+thích từ tài liệu, trong cùng một lượt.
+
+### 5B.6. Giới hạn hiện tại, nói thẳng
+
+- **Không dấu là không ra kết quả.** `ILIKE '%xi mang%'` trả về **0 dòng**
+  trong khi `'%xi măng%'` trả 135. Hướng sửa: `unaccent` + `pg_trgm` (cả hai
+  extension đều có sẵn trong image Postgres đang dùng và đã kiểm tra chạy
+  được: `similarity('xi mang pcb40', unaccent('Xi măng Sông Gianh PCB40'))
+  = 0.45`).
+- **Không có tổng hợp.** Chưa có min/max/trung vị theo đơn vị, nên "giá xi
+  măng khoảng bao nhiêu" chưa trả lời gọn được.
+- **`region` bắt buộc** trong schema tool, nên câu hỏi không nêu vùng sẽ bị
+  model đoán vùng.
+- **Không làm text2sql.** Schema chỉ có 1 bảng ~12 cột, không join: một tool
+  có tham số kiểu bao phủ hết không gian truy vấn và **test được**, trong khi
+  SQL do LLM sinh thì không, lại thêm bề mặt rủi ro trên cùng database chứa
+  `users`/`messages`. Chỗ nghẽn thật là **chất lượng khớp tên**, thứ mà
+  text2sql không hề chạm tới.
 
 ---
 
@@ -486,6 +934,157 @@ Prompt buộc: **giữ nguyên 100% mọi số**, giữ ký hiệu `[n]` cho gi�
 là vật liệu chính chưa gồm nhân công/VAT", và **nếu không có dòng "NGÂN SÁCH MỤC
 TIÊU" thì tuyệt đối không nhắc chữ "ngân sách"** (tránh bịa ngân sách). Stream ở
 `temperature=0.2`.
+
+---
+
+## 8B. Các loại hình xây dựng và công thức tính theo m²
+
+File: [project_types.py](../app/core/construction/project_types.py)
+
+### 8B.1. Mức chính xác của những con số này
+
+Toàn bộ mục này thuộc mức **"ước lượng ý tưởng"** (mục 4.1 của cẩm nang
+nghiệp vụ): dùng khi **chưa có bản vẽ**, chưa có bảng thống kê thép, chưa có
+chỉ dẫn kỹ thuật. Nó **không thay** bóc tách khối lượng khi đã có hồ sơ thiết
+kế, và **không phải** giá trọn gói — chỉ là chi phí **vật liệu chính**, chưa
+gồm nhân công, thiết bị, lợi nhuận nhà thầu, VAT, chi phí gián tiếp.
+
+Hệ số là số tròn có chủ đích. Ghi ba chữ số có nghĩa sẽ ngụ ý một độ chính
+xác mà cấp độ ước lượng này không có. Tiêu hao thật thay đổi theo khẩu độ,
+số tầng, địa chất, hệ kết cấu và yêu cầu kỹ thuật — một khung 5 tầng trên nền
+đất yếu có thể vượt hệ số thép của hồ sơ nhà phố tới 50%.
+
+### 8B.2. Công thức chung
+
+Với mọi loại hình, mỗi vật liệu được tính như nhau:
+
+```
+khối lượng vật liệu i  =  A  ×  k_i  ×  f
+chi phí vật liệu i     =  khối lượng vật liệu i  ×  đơn giá tra từ material_prices
+tổng chi phí vật liệu  =  Σ chi phí vật liệu i
+```
+
+| ký hiệu | ý nghĩa |
+|---|---|
+| `A` | diện tích tham chiếu — **tuỳ loại hình**, xem cột "Đơn vị diện tích" ở 8B.3 |
+| `k_i` | hệ số tiêu hao vật liệu `i` trên 1 đơn vị diện tích |
+| `f` | hệ số hoàn thiện, **chỉ áp cho vật liệu hoàn thiện** (sơn, gạch lát) và chỉ ở loại hình có hoàn thiện |
+
+`f` = 1,00 (thô) · 1,00 (hoàn thiện cơ bản) · 1,15 (hoàn thiện cao cấp).
+
+> **Cẩn thận với `A`.** Nhà thì `A` là **diện tích sàn** (cộng mọi tầng). Sân,
+> nhà xưởng, san nền thì `A` là **diện tích mặt bằng**. Tường rào thì `A` là
+> **diện tích mặt tường** = dài × cao — tường rào dài 30 m cao 2 m thì nhập
+> **60**, không phải 30.
+
+### 8B.3. Bảng hệ số tiêu hao theo loại hình
+
+Đơn vị của mỗi ô: lượng vật liệu trên **1 đơn vị diện tích tham chiếu**.
+
+| Loại hình (`project_type`) | Đơn vị diện tích | Bê tông m³ | Thép kg | Thép hình kg | Tôn m² | Gạch xây viên | Xi măng kg | Cát m³ | Đá m³ | Cát san lấp m³ | Sơn lít | Gạch lát m² | Hoàn thiện? |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:--:|
+| `nha_pho` — nhà phố/nhà ở khung BTCT | m² sàn | 0,35 | 25 | — | — | 55 | 60 | 0,20 | — | — | 0,44 | 0,85 | ✔ |
+| `nha_cap_4` — nhà cấp 4, mái tôn/ngói | m² sàn | 0,18 | 12 | — | 1,15 | 60 | 55 | 0,18 | — | — | 0,40 | 0,90 | ✔ |
+| `biet_thu` — biệt thự/nhà vườn | m² sàn | 0,40 | 30 | — | — | 65 | 75 | 0,25 | — | — | 0,60 | 1,00 | ✔ |
+| `nha_xuong` — nhà xưởng thép tiền chế | m² mặt bằng | 0,22 | 8 | 35 | 1,45 | — | 20 | 0,10 | 0,12 | — | — | — | ✘ |
+| `nha_kho` — nhà kho/kho bãi có mái | m² mặt bằng | 0,18 | 6 | 25 | 1,35 | — | 15 | 0,08 | 0,10 | — | — | — | ✘ |
+| `san_be_tong` — sân/đường nội bộ/bãi xe | m² mặt bằng | 0,16 | 4,5 | — | — | — | — | — | 0,18 | 0,12 | — | — | ✘ |
+| `san_nen` — san nền/tôn nền | m² mặt bằng | — | — | — | — | — | — | — | 0,05 | 0,55 | — | — | ✘ |
+| `tuong_rao` — tường rào | **m² mặt tường** | 0,05 | 4 | — | — | 60 | 35 | 0,12 | — | — | 0,45 | — | ✔ |
+| `via_he_lat_gach` — vỉa hè/sân lát gạch | m² mặt bằng | 0,08 | — | — | — | — | 25 | 0,10 | 0,08 | — | — | 1,05 | ✘ |
+| `cai_tao` — cải tạo/sửa chữa | m² sàn cải tạo | — | — | — | — | 25 | 35 | 0,12 | — | — | 0,50 | 0,70 | ✔ |
+
+Ghi chú từng loại hình:
+
+- **`nha_pho`** — nhà 1–4 tầng, khung BTCT, tường xây gạch. Đây là hồ sơ mặc
+  định và cũng là hồ sơ được hiệu chuẩn kỹ nhất.
+- **`nha_cap_4`** — một tầng, không có sàn tầng trên nên bê tông và thép thấp
+  hơn hẳn nhà phố; phần bao che chuyển sang tường xây và mái lợp. Hệ số tôn
+  1,15 vì mái dốc có diện tích lớn hơn diện tích sàn.
+- **`biet_thu`** — nhịp lớn hơn và nhiều chi tiết kiến trúc hơn nên tiêu hao
+  cao hơn nhà phố khoảng 15–25%.
+- **`nha_xuong`** — thép hình và tôn **chi phối giá thành**, gần như không
+  dùng gạch xây hay sơn nước. Hệ số thay đổi mạnh theo khẩu độ và tải cầu
+  trục — đây là loại hình có sai số lớn nhất.
+- **`san_be_tong`** — áo cứng dày 12–18 cm trên lớp móng đá dăm. Thép chỉ là
+  lưới chống nứt, không phải cốt thép chịu lực.
+- **`san_nen`** — giả định chiều dày tôn nền trung bình ~50 cm. Chiều dày
+  thật do cao độ thiết kế quyết định; đây là biến đổi mạnh nhất trong toàn
+  bộ bảng.
+- **`tuong_rao`** — bê tông và thép là phần móng và giằng, không phải khung.
+- **`cai_tao`** — giả định **giữ nguyên khung kết cấu**: chỉ xây/đập tường
+  ngăn, trát, lát, sơn lại. Vì vậy không có bê tông và cốt thép.
+
+### 8B.4. Nhà ở: thô và hoàn thiện gồm những gì
+
+Câu hỏi "xây thô cần gì, full hoàn thiện cần gì" hay gặp nhất, nên tách riêng.
+
+**Phần thô (`finish_level = "tho"`)** — vật liệu tạo nên kết cấu và bao che:
+
+| Hạng mục | Vật liệu | Hệ số (nhà phố) |
+|---|---|---|
+| Móng, cột, dầm, sàn | bê tông thương phẩm | 0,35 m³/m² sàn |
+| Cốt thép | thép thanh/cuộn | 25 kg/m² sàn |
+| Tường bao, tường ngăn | gạch xây | 55 viên/m² sàn |
+| Vữa xây, vữa trát | xi măng + cát | 60 kg + 0,20 m³ /m² sàn |
+
+**Hoàn thiện cơ bản (`hoan_thien_co_ban`)** — thêm lớp phủ bề mặt:
+
+| Hạng mục | Vật liệu | Hệ số |
+|---|---|---|
+| Sơn tường trong + ngoài | sơn nước | 0,44 lít/m² sàn |
+| Lát nền | gạch lát | 0,85 m²/m² sàn |
+
+Cách ra 0,44 lít: diện tích sơn ≈ 2,2 m² trên mỗi m² sàn (tường hai mặt +
+trần), sơn 2 nước, độ phủ ~10 m²/lít ⇒ `2,2 ÷ 10 × 2 = 0,44`.
+
+**Hoàn thiện cao cấp (`hoan_thien_cao_cap`)** — cùng danh mục vật liệu, nhân
+hệ số `f = 1,15` cho **sơn và gạch lát**. Kết cấu không đổi vì cấp hoàn thiện
+không làm thay đổi khung.
+
+> Những thứ **không** nằm trong ước lượng này: thiết bị vệ sinh, hệ điện
+> nước, cửa, lan can, trần thạch cao, chống thấm, nhân công, máy thi công,
+> lợi nhuận nhà thầu, VAT. Với nhà ở, các khoản đó thường lớn hơn phần vật
+> liệu chính — nên con số tool đưa ra **không phải** "giá xây nhà".
+
+### 8B.5. Ví dụ tính tay — đối chiếu với kết quả tool
+
+Sân bê tông 200 m², vùng HN, giá lấy từ `material_prices` tại thời điểm chạy:
+
+```
+A = 200 m² mặt bằng, loại hình san_be_tong, f không áp dụng
+
+Bê tông:      200 × 0,16  = 32,0 m³  × 1.320.000 đ/m³ =  42.240.000 đ
+Thép (lưới):  200 × 4,5   = 900  kg  ×    15.620 đ/kg =  14.058.000 đ
+Đá dăm:       200 × 0,18  = 36,0 m³  ×   500.000 đ/m³ =  18.000.000 đ
+Cát san lấp:  200 × 0,12  = 24,0 m³  ×   210.000 đ/m³ =   5.040.000 đ
+                                                        ─────────────
+                                          TỔNG VẬT LIỆU = 79.338.000 đ
+                                               ≈ 397.000 đ/m²
+```
+
+Kết quả tool chạy thật trùng khớp từng dòng — công thức trong tài liệu này
+đúng là công thức đang chạy trong code, không phải mô tả gần đúng.
+
+### 8B.6. Hai chốt an toàn trên đơn giá
+
+**Biên giá hợp lý (`price_min` / `price_max`).** Mỗi vật liệu khai báo khoảng
+đơn giá chấp nhận được. Ứng viên nằm ngoài khoảng bị loại, **từ cả DB lẫn
+web**. Chốt này ra đời sau một sự cố thật: nguồn giá web trả về ~1,8 tỷ đ/kg
+cho thép hình (một con số tổng dự án bị bóc nhầm thành đơn giá), nhân với
+17.500 kg thành **31.500 tỷ đ** cho một hạng mục — sai sáu bậc độ lớn nhưng
+in ra với vẻ chắc chắn y hệt các dòng khác. Biên đặt rộng có chủ đích: nó bắt
+thảm hoạ về đơn vị/dấu thập phân, không phải để phán xét giá thị trường.
+
+**Quy đổi đơn vị (`alt_units`).** Xi măng ở Hà Nội có 31 dòng theo `kg` và 27
+dòng theo `tấn`. Không quy đổi thì một nửa dữ liệu vô hình và vật liệu báo
+"không có giá". Tra theo đơn vị chính trước, không thấy thì tra đơn vị thay
+thế rồi nhân hệ số (`tấn → kg` là `× 1/1000`).
+
+Ngoài ra vẫn giữ cơ chế cũ: `exclude_keywords` lọc ngay ở tầng SQL, và một
+sub-model chọn đúng dòng trong số ứng viên thật — model **không bao giờ tự
+sinh giá**, nó chỉ chọn giữa các dòng có thật hoặc nói không dòng nào phù
+hợp, và câu đó thành một dòng "không có dữ liệu" trung thực.
 
 ---
 

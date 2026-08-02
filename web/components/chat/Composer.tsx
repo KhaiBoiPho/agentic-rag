@@ -5,7 +5,7 @@ import { apiFetch } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import { tf, useT } from "@/lib/i18n";
 import type { ChatMode } from "@/lib/types";
-import { Book, Globe, Mic, Search, Send } from "../Icons";
+import { Book, Bot, Globe, Mic, Search, Send } from "../Icons";
 
 export interface SendOpts {
   viaVoice?: boolean;
@@ -114,6 +114,7 @@ export default function Composer({
     { id: "chat", label: t.chat.modeChat, Icon: Book },
     { id: "search", label: t.chat.modeSearch, Icon: Search },
     { id: "research", label: t.chat.modeResearch, Icon: Globe },
+    { id: "agentic", label: t.chat.modeAgentic, Icon: Bot },
   ];
 
   const placeholder =
@@ -121,7 +122,9 @@ export default function Composer({
       ? t.chat.placeholderSearch
       : mode === "research"
         ? t.chat.placeholderResearch
-        : t.chat.placeholderChat;
+        : mode === "agentic"
+          ? t.chat.placeholderAgentic
+          : t.chat.placeholderChat;
 
   return (
     <div className="composer">
@@ -178,6 +181,8 @@ export default function Composer({
             <span>{tf(t.chat.ragOn, { name: activeKb?.name ?? activeProject?.name ?? "" })}</span>
           ) : mode === "chat" ? (
             <span>{t.chat.ragOffChat}</span>
+          ) : mode === "agentic" ? (
+            <span>{t.chat.agenticHint}</span>
           ) : (
             <span>{mode === "search" ? t.chat.webCiteSearch : t.chat.webCiteResearch}</span>
           )}

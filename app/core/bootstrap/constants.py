@@ -34,10 +34,12 @@ KB_STANDARDS_NAME = "Quy chuẩn & tiêu chuẩn xây dựng Việt Nam"
 
 SYSTEM_KB_IDS = {KB_KNOWLEDGE_ID, KB_PRICING_ID, KB_VENDOR_ID, KB_STANDARDS_ID}
 
-# Only this one system KB gets structured price-row extraction
-# (upload-price) — the other 3 are narrative/RAG-only content, see
-# app/api/v1/documents.py.
-PRICE_EXTRACTION_KB_IDS = {KB_PRICING_ID}
+# Structured price extraction is no longer a fixed list of KB ids — it is a
+# per-KB setting (`knowledge_bases.price_extraction`, added in migration
+# 0008) that any user can turn on for their own KB. All 4 system KBs are
+# backfilled to true: a document with no readable price table simply yields
+# 0 rows, which the UI shows as "0 dòng giá", and its RAG chunks are
+# unaffected either way. See app/api/v1/documents.py:upload_document.
 
 
 def is_system_kb(kb_id: str) -> bool:

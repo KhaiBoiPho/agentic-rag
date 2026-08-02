@@ -311,6 +311,7 @@ export default function ChatView({ conversationId }: { conversationId: string })
   async function streamChat(opts: {
     message?: string;
     viaVoice?: boolean;
+    agentic?: boolean;
     formSubmission?: { form_id: string; data: Record<string, unknown> };
   }) {
     const aId = crypto.randomUUID();
@@ -324,10 +325,14 @@ export default function ChatView({ conversationId }: { conversationId: string })
       skill_id: null,
       temperature: settings.temperature,
       max_tokens: settings.max_tokens,
-      use_rag: !!(activeKbId || activeProjectId),
+      // Agentic mode ignores the KB/project picker: it retrieves across every
+      // knowledge base (the backend resolves `all_kbs`, so a KB created after
+      // this page loaded is included) and may call the price/cost tools.
+      use_rag: opts.agentic ? true : !!(activeKbId || activeProjectId),
+      all_kbs: !!opts.agentic,
       top_k: settings.top_k,
       score_threshold: 0.5,
-      mode: "rag",
+      mode: opts.agentic ? "agent" : "rag",
       form_submission: opts.formSubmission ?? null,
       via_voice: !!opts.viaVoice,
     };
@@ -434,7 +439,7 @@ export default function ChatView({ conversationId }: { conversationId: string })
       try {
         if (mode === "search") await streamSearch(text);
         else if (mode === "research") await streamResearch(text);
-        else await streamChat({ message: text, viaVoice: opts?.viaVoice });
+        else await streamChat({ message: text, viaVoice: opts?.viaVoice, agentic: mode === "agentic" });
       } finally {
         busyRef.current = false;
         setBusy(false);
@@ -487,6 +492,10 @@ export default function ChatView({ conversationId }: { conversationId: string })
           activeScope ? (
             <span className="badge rag">
               <Book /> {activeScope}
+            </span>
+          ) : mode === "agentic" ? (
+            <span className="badge web">
+              <Bot /> {t.chat.badgeAgentic}
             </span>
           ) : mode !== "chat" ? (
             <span className="badge web">

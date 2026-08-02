@@ -33,10 +33,36 @@ class KnowledgeBaseRepository:
             )
             return list(result.scalars().all())
 
-    async def create(self, user_id: str, name: str, description: str = "") -> KnowledgeBase:
+    async def create(
+        self,
+        user_id: str,
+        name: str,
+        description: str = "",
+        price_extraction: bool = False,
+    ) -> KnowledgeBase:
         async with get_session() as s:
-            kb = KnowledgeBase(user_id=uuid.UUID(user_id), name=name, description=description)
+            kb = KnowledgeBase(
+                user_id=uuid.UUID(user_id),
+                name=name,
+                description=description,
+                price_extraction=price_extraction,
+            )
             s.add(kb)
+            await s.flush()
+            await s.refresh(kb)
+            return kb
+
+    async def set_price_extraction(self, kb_id: str, enabled: bool) -> KnowledgeBase | None:
+        """Toggle price extraction. Deliberately NOT ownership-scoped: the 4
+        system KBs have no per-user owner but must stay configurable from the
+        UI, and this only changes how future uploads are processed — it
+        neither reads nor destroys anything (unlike delete, which stays
+        owner-scoped and blocked for system KBs)."""
+        async with get_session() as s:
+            kb = await s.get(KnowledgeBase, uuid.UUID(kb_id))
+            if not kb:
+                return None
+            kb.price_extraction = enabled
             await s.flush()
             await s.refresh(kb)
             return kb

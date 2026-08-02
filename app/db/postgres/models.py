@@ -72,6 +72,13 @@ class KnowledgeBase(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     document_count: Mapped[int] = mapped_column(Integer, default=0)
+    # When true, every upload into this KB also runs structured price-row
+    # extraction into material_prices (PriceExtractionPipeline), on top of the
+    # normal chunk→Qdrant flow. Replaces the old hard-coded
+    # PRICE_EXTRACTION_KB_IDS check so users can turn it on for their own KBs.
+    price_extraction: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now

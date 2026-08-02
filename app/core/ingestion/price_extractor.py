@@ -16,10 +16,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from io import BytesIO
 
-import pdfplumber
-
+from app.core.chunking.table_extract import is_unit_ditto
+from app.core.ingestion.price_tables import iter_price_tables
 from app.db.postgres.repositories.material_price_repo import MaterialPriceRow
 
 # ─── Source-file classification (plan §1.3) ────────────────────────────────
@@ -59,6 +58,19 @@ _NAME_KEYWORDS = [
 ]
 _UNIT_KEYWORDS = ["đơn vị", "don vi", "đvt"]
 _CATEGORY_KEYWORDS = ["nhóm vật liệu", "nhom vat lieu"]
+# "Tiêu chuẩn kỹ thuật" / "Nhà sản xuất" are usually rendered as one cell
+# merged down the whole product family, so they only became readable once
+# merged cells were filled (table_extract). They answer questions the price
+# columns cannot ("tiêu chuẩn RoHS/IEC 62262 áp dụng cho vật liệu nào").
+_SPEC_KEYWORDS = ["tiêu chuẩn kỹ thuật", "tieu chuan ky thuat", "tiêu chuẩn", "tieu chuan"]
+_MANUFACTURER_KEYWORDS = [
+    "nhà sản xuất",
+    "nha san xuat",
+    "hãng sản xuất",
+    "nhà cung cấp",
+    "nha cung cap",
+    "đơn vị cung cấp",
+]
 _PRICE_AT_SOURCE_KEYWORDS = ["tại nơi sản xuất", "tai noi san xuat", "tại mỏ", "tai mo"]
 _PRICE_AT_SITE_KEYWORDS = ["tại chân công trình", "tai chan cong trinh", "đến chân công trình"]
 _PRICE_GENERIC_KEYWORDS = [
@@ -149,6 +161,8 @@ class _ColumnMapping:
     price_site_col: int | None
     price_source_col: int | None
     price_generic_col: int | None
+    spec_col: int | None = None
+    manufacturer_col: int | None = None
 
 
 def _is_legend_row(row: list[str | None]) -> bool:
@@ -172,6 +186,7 @@ def _detect_header(table: list[list[str | None]]) -> tuple[int, _ColumnMapping] 
     name_col = unit_col = category_col = price_site_col = price_source_col = price_generic_col = (
         None
     )
+    spec_col = manufacturer_col = None
     for i, raw_row in enumerate(table[:6]):
         cells = [c or "" for c in raw_row]
         # Decorative title/subtitle rows are typically one long cell spanning
@@ -187,6 +202,8 @@ def _detect_header(table: list[list[str | None]]) -> tuple[int, _ColumnMapping] 
         ps = _find_col(cells, _PRICE_AT_SITE_KEYWORDS)
         po = _find_col(cells, _PRICE_AT_SOURCE_KEYWORDS)
         pg = _find_col(cells, _PRICE_GENERIC_KEYWORDS) if ps is None and po is None else None
+        sp = _find_col(cells, _SPEC_KEYWORDS)
+        mf = _find_col(cells, _MANUFACTURER_KEYWORDS)
         hit = any(v is not None for v in (n, u, c, ps, po, pg))
 
         if not hit:
@@ -201,6 +218,8 @@ def _detect_header(table: list[list[str | None]]) -> tuple[int, _ColumnMapping] 
         price_site_col = price_site_col if price_site_col is not None else ps
         price_source_col = price_source_col if price_source_col is not None else po
         price_generic_col = price_generic_col if price_generic_col is not None else pg
+        spec_col = spec_col if spec_col is not None else sp
+        manufacturer_col = manufacturer_col if manufacturer_col is not None else mf
 
     if header_idx is None or name_col is None or unit_col is None:
         return None
@@ -213,16 +232,79 @@ def _detect_header(table: list[list[str | None]]) -> tuple[int, _ColumnMapping] 
         header_idx += 1
 
     mapping = _ColumnMapping(
-        name_col, unit_col, category_col, price_site_col, price_source_col, price_generic_col
+        name_col,
+        unit_col,
+        category_col,
+        price_site_col,
+        price_source_col,
+        price_generic_col,
+        spec_col,
+        manufacturer_col,
     )
     return header_idx, mapping
+
+
+_ORDINAL_RE = re.compile(r"^\d{1,3}$")
+
+
+def _row_ordinal(cells: list[str]) -> int | None:
+    """The 'STT/TT' running number, if this row starts with one.
+
+    These annexes restart the numbering at 1 for every material group, so a
+    reset is the one reliable signal that a new group began — including when
+    the group has no heading row at all (vendor blocks identify themselves
+    only through the manufacturer column)."""
+    for cell in cells[:2]:
+        text = cell.strip()
+        if text:
+            return int(text) if _ORDINAL_RE.match(text) else None
+    return None
+
+
+_ORG_RE = re.compile(
+    r"c[ôo]ng\s*ty|\bcty\b|\btnhh\b|\bcp\b|\bcổ\s*phần\b|t[ậa]p\s*đo[àa]n|nh[àa]\s*m[áa]y"
+    r"|doanh\s*nghi[ệe]p|c[ơo]\s*s[ởo]\s|chi\s*nh[áa]nh|h[ợo]p\s*t[áa]c\s*x[ãa]|\bdntn\b",
+    re.IGNORECASE,
+)
+
+
+def _is_label(text: str) -> bool:
+    """Textual enough to be a group heading — rules out an ordinal ("5") or a
+    roman numeral left alone in the TT column."""
+    stripped = text.strip()
+    return len(stripped) >= 4 and not stripped.replace(".", "").isdigit()
+
+
+def _looks_like_org(text: str) -> bool:
+    """The "Nhà sản xuất / Ghi chú" column mixes the vendor's name with its
+    address, phone number and delivery notes on the rows below it. Only the
+    name identifies the manufacturer, so anything that doesn't read as an
+    organisation is left for the running value to cover."""
+    return bool(text) and bool(_ORG_RE.search(text))
+
+
+@dataclass
+class _ParseState:
+    """Carried across tables/pages: a price table runs for dozens of pages and
+    its group headings, units and column mapping all live on earlier pages."""
+
+    category: str = ""
+    unit: str = ""
+    manufacturer: str = ""
+    # True while the last heading row's category/manufacturer have not yet
+    # been claimed by a group. Prevents one group's heading from labelling
+    # the *next* group.
+    heading_unclaimed: bool = False
 
 
 def _parse_data_rows(
     data_rows: list[list[str | None]],
     mapping: _ColumnMapping,
-    current_category: str,
-) -> tuple[list[MaterialPriceRow], list[str], str]:
+    state: _ParseState,
+    raw_rows: list[list[str]] | None = None,
+) -> tuple[list[MaterialPriceRow], list[str]]:
+    """`raw_rows`, when given, is the same block of rows *before* merged-cell
+    fill — used only to recognise group-heading rows by their emptiness."""
     rows: list[MaterialPriceRow] = []
     warnings: list[str] = []
     name_col, unit_col, category_col = mapping.name_col, mapping.unit_col, mapping.category_col
@@ -231,14 +313,27 @@ def _parse_data_rows(
         mapping.price_source_col,
         mapping.price_generic_col,
     )
+    spec_col, manufacturer_col = mapping.spec_col, mapping.manufacturer_col
 
-    for row in data_rows:
+    for row_idx, row in enumerate(data_rows):
         cells = [c or "" for c in row]
         if len(cells) <= max(name_col, unit_col):
             continue
 
+        raw_cells = raw_rows[row_idx] if raw_rows is not None and row_idx < len(raw_rows) else cells
+
         name = cells[name_col].strip()
         unit = cells[unit_col].strip()
+
+        # Vendor blocks state the unit once and write "-" (or "-nt-") on every
+        # following row — a textual merged cell. "-" is never a real unit, so
+        # in this one column it can only mean "same as above"; storing it
+        # verbatim produced prices rendered as "4.250.000 đ/-" and made the
+        # unit filter in MaterialPriceRepository.lookup() unusable.
+        if is_unit_ditto(unit) and state.unit:
+            unit = state.unit
+        elif unit and not is_unit_ditto(unit):
+            state.unit = unit
 
         non_empty = [c.strip() for c in cells if c and c.strip()]
         cat_cell = (
@@ -247,77 +342,101 @@ def _parse_data_rows(
             else ""
         )
 
-        # Sparse "group header" row: material name column is empty but the
-        # category column (or, less commonly, the name column itself) carries
-        # a group label — a common flattening of merged cells for a
-        # material-group heading (e.g. "I | XI MĂNG | | | ...").
-        if unit == "" and len(non_empty) <= 2 and (cat_cell or name):
-            current_category = cat_cell or name
+        # Sparse "group header" row: a material-group heading rendered as one
+        # label with the rest of the row empty (e.g. "I | XI MĂNG | | | ...").
+        #
+        # Judged entirely on the RAW row, and the label is taken from whichever
+        # column holds it — some annexes put it in the ordinal (TT) column, not
+        # the name column. Both details matter: after merged-cell fill such a
+        # row inherits the unit, standard and even the *material name* of the
+        # family above it, so reading it as a data row would invent a priced
+        # product that does not exist in the document.
+        raw_non_empty = [c for c in raw_cells if c.strip()]
+        raw_unit = raw_cells[unit_col].strip() if unit_col < len(raw_cells) else ""
+        raw_name = raw_cells[name_col].strip() if name_col < len(raw_cells) else ""
+        raw_cat = (
+            raw_cells[category_col].strip()
+            if category_col is not None and category_col < len(raw_cells)
+            else ""
+        )
+        raw_priced = any(
+            col is not None and col < len(raw_cells) and _parse_price(raw_cells[col]) is not None
+            for col in (price_source_col, price_site_col, price_generic_col)
+        )
+        heading_label = raw_cat or raw_name or next((c for c in raw_non_empty if _is_label(c)), "")
+        if raw_unit == "" and not raw_priced and len(raw_non_empty) <= 2 and heading_label:
+            state.category = heading_label
+            state.heading_unclaimed = True
+            # A vendor block announces its company on this same heading row
+            # ("Đèn led Thương hiệu: Philips OEM DHP | … | Công ty CP thiết bị
+            # điện Đồng Hưng Phát"); the data rows below carry only "-nt-".
+            if manufacturer_col is not None and manufacturer_col < len(raw_cells):
+                heading_mfr = _norm_ws(raw_cells[manufacturer_col])
+                if _looks_like_org(heading_mfr):
+                    state.manufacturer = heading_mfr
             continue
 
         if not name or not unit:
             continue
 
+        # New group starting (numbering restarted at 1) with no heading row of
+        # its own: the previous group's label must not be inherited. Doing so
+        # filed 47 CDE VINA lamp models under "Cáp vặn xoắn hạ thế", which made
+        # lookup_material_price(material_category="đèn led") return nothing.
+        if _row_ordinal(raw_cells) == 1:
+            if state.heading_unclaimed:
+                state.heading_unclaimed = False
+            else:
+                state.category = ""
+                state.manufacturer = ""
+
         # Header/category cells commonly wrap across lines in the source PDF
         # (e.g. "Đá xây\ndựng") — collapse to single-space so ILIKE lookups
         # by category/name (lookup_material_price) actually match.
         name = _norm_ws(name)
-        material_category = _norm_ws(cat_cell or current_category or "chưa phân loại")
+        material_category = _norm_ws(cat_cell or state.category or "chưa phân loại")
+
+        def _cell(col: int | None) -> str | None:
+            if col is None or col >= len(cells):
+                return None
+            return _norm_ws(cells[col]) or None
+
+        mfr_cell = _cell(manufacturer_col)
+        if mfr_cell and _looks_like_org(mfr_cell):
+            state.manufacturer = mfr_cell
+        manufacturer = state.manufacturer or None
 
         priced_any = False
-        if price_source_col is not None and price_source_col < len(cells):
-            price = _parse_price(cells[price_source_col])
-            if price is not None:
-                rows.append(
-                    MaterialPriceRow(
-                        region="",
-                        material_category=material_category,
-                        material_name=name,
-                        unit=unit,
-                        price_ex_vat=price,
-                        price_basis="tai_mo",
-                        source_type="",
-                        raw_row_text=" | ".join(non_empty),
-                    )
+        for col, basis in (
+            (price_source_col, "tai_mo"),
+            (price_site_col, "tai_chan_cong_trinh"),
+            (price_generic_col, "khong_ro"),
+        ):
+            if col is None or col >= len(cells):
+                continue
+            price = _parse_price(cells[col])
+            if price is None:
+                continue
+            rows.append(
+                MaterialPriceRow(
+                    region="",
+                    material_category=material_category,
+                    material_name=name,
+                    unit=unit,
+                    price_ex_vat=price,
+                    price_basis=basis,
+                    source_type="",
+                    raw_row_text=" | ".join(non_empty),
+                    spec=_cell(spec_col),
+                    manufacturer=manufacturer,
                 )
-                priced_any = True
-        if price_site_col is not None and price_site_col < len(cells):
-            price = _parse_price(cells[price_site_col])
-            if price is not None:
-                rows.append(
-                    MaterialPriceRow(
-                        region="",
-                        material_category=material_category,
-                        material_name=name,
-                        unit=unit,
-                        price_ex_vat=price,
-                        price_basis="tai_chan_cong_trinh",
-                        source_type="",
-                        raw_row_text=" | ".join(non_empty),
-                    )
-                )
-                priced_any = True
-        if price_generic_col is not None and price_generic_col < len(cells):
-            price = _parse_price(cells[price_generic_col])
-            if price is not None:
-                rows.append(
-                    MaterialPriceRow(
-                        region="",
-                        material_category=material_category,
-                        material_name=name,
-                        unit=unit,
-                        price_ex_vat=price,
-                        price_basis="khong_ro",
-                        source_type="",
-                        raw_row_text=" | ".join(non_empty),
-                    )
-                )
-                priced_any = True
+            )
+            priced_any = True
 
         if not priced_any and name and unit:
             warnings.append(f"Không đọc được giá cho dòng: {' | '.join(non_empty)[:120]}")
 
-    return rows, warnings, current_category
+    return rows, warnings
 
 
 def parse_price_table(table: list[list[str | None]]) -> TableParseResult:
@@ -334,60 +453,73 @@ def parse_price_table(table: list[list[str | None]]) -> TableParseResult:
         )
 
     header_end, mapping = detected
-    rows, warnings, _ = _parse_data_rows(table[header_end + 1 :], mapping, "")
+    rows, warnings = _parse_data_rows(table[header_end + 1 :], mapping, _ParseState())
     return TableParseResult(rows, warnings)
 
 
-def extract_price_rows(content: bytes, region: str, source_type: str) -> TableParseResult:
-    """Entry point: run pdfplumber table extraction over the whole PDF.
+def extract_price_rows(
+    content: bytes, region: str, source_type: str, filename: str = ""
+) -> TableParseResult:
+    """Entry point: walk every table in the document and map it to price rows.
+
+    Source formats are handled by price_tables.iter_price_tables (PDF, DOCX,
+    Markdown) so a Markdown price list feeds material_prices exactly like a
+    PDF annex does. An unsupported extension yields no tables at all, which
+    surfaces as 0 rows + one warning rather than an exception — a document
+    that has no price table is a normal outcome, not a failed ingest.
 
     A price table commonly spans many pages without repeating its text
     header (only a decorative column-index row may repeat) — so the column
     mapping and the running material_category are carried forward from the
-    last page that DID have a detectable header, rather than re-detecting
+    last table that DID have a detectable header, rather than re-detecting
     per page. This is what makes continuation pages (see Đà Nẵng PhuLuc1.pdf,
     128 pages / 1 table) parse instead of being skipped.
+
+    `filename` defaults to "" for backwards compatibility with callers that
+    only passed bytes; that path is treated as PDF, which is what those
+    callers meant.
     """
     all_rows: list[MaterialPriceRow] = []
     all_warnings: list[str] = []
     last_mapping: _ColumnMapping | None = None
     last_col_count: int | None = None
-    current_category = ""
+    state = _ParseState()
 
-    with pdfplumber.open(BytesIO(content)) as pdf:
-        for page_idx, page in enumerate(pdf.pages):
-            for table in page.extract_tables():
-                if not table:
-                    continue
-                col_count = max((len(r) for r in table[:3]), default=0)
+    tables = iter_price_tables(content, filename or "x.pdf")
 
-                detected = _detect_header(table)
-                if detected is not None:
-                    header_end, last_mapping = detected
-                    last_col_count = col_count
-                    data_rows = table[header_end + 1 :]
-                elif last_mapping is not None and col_count == last_col_count:
-                    # No header on this table, but same column count as the
-                    # last mapped table — treat as a genuine continuation
-                    # (e.g. a table split across many pages). A DIFFERENT
-                    # column count means this is a different table/section
-                    # entirely, so the old mapping must NOT be reused —
-                    # applying it would silently misread the wrong columns.
-                    data_rows = table[1:] if _is_legend_row(table[0]) else table
-                else:
-                    all_warnings.append(
-                        f"page {page_idx + 1}: Không nhận diện được header bảng "
-                        "(thiếu cột tên vật liệu/đơn vị) — bỏ qua bảng."
-                    )
-                    continue
+    for label, table, raw_table in tables:
+        if not table:
+            continue
+        col_count = max((len(r) for r in table[:3]), default=0)
 
-                rows, warnings, current_category = _parse_data_rows(
-                    data_rows, last_mapping, current_category
-                )
-                for r in rows:
-                    r.region = region
-                    r.source_type = source_type
-                all_rows.extend(rows)
-                all_warnings.extend(f"page {page_idx + 1}: {w}" for w in warnings)
+        detected = _detect_header(table)
+        if detected is not None:
+            header_end, last_mapping = detected
+            last_col_count = col_count
+            data_rows = table[header_end + 1 :]
+            raw_data_rows = raw_table[header_end + 1 :]
+        elif last_mapping is not None and col_count == last_col_count:
+            # No header on this table, but same column count as the last
+            # mapped table — treat as a genuine continuation (e.g. a table
+            # split across many pages). A DIFFERENT column count means this
+            # is a different table/section entirely, so the old mapping must
+            # NOT be reused — applying it would silently misread the wrong
+            # columns.
+            skip = 1 if _is_legend_row(table[0]) else 0
+            data_rows = table[skip:]
+            raw_data_rows = raw_table[skip:]
+        else:
+            all_warnings.append(
+                f"{label}: Không nhận diện được header bảng "
+                "(thiếu cột tên vật liệu/đơn vị) — bỏ qua bảng."
+            )
+            continue
+
+        rows, warnings = _parse_data_rows(data_rows, last_mapping, state, raw_data_rows)
+        for r in rows:
+            r.region = region
+            r.source_type = source_type
+        all_rows.extend(rows)
+        all_warnings.extend(f"{label}: {w}" for w in warnings)
 
     return TableParseResult(all_rows, all_warnings)

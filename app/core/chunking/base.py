@@ -93,15 +93,36 @@ def naive_merge(
     token budget is consumed, then starts a new chunk, prepending the overlap
     portion from the previous chunk.
     """
+    return [
+        text
+        for text, _ in naive_merge_with_origins(
+            sections, chunk_token_num, delimiter, overlap_percent
+        )
+    ]
+
+
+def naive_merge_with_origins(
+    sections: list[str],
+    chunk_token_num: int = 512,
+    delimiter: str = "\n!?。；！？",
+    overlap_percent: int = 15,
+) -> list[tuple[str, int]]:
+    """naive_merge(), but each chunk is paired with the index of the first
+    input section that contributed to it.
+
+    Callers use the origin index to carry per-section metadata (page number,
+    most importantly) onto the merged chunk instead of guessing.
+    """
     if not sections:
         return []
 
     chunks: list[str] = [""]
     token_counts: list[int] = [0]
+    origins: list[int] = [0]
 
     overlap_ratio = (100 - overlap_percent) / 100.0
 
-    for sec in sections:
+    for idx, sec in enumerate(sections):
         sec = "\n" + sec
         tnum = count_tokens(sec)
 
@@ -112,11 +133,12 @@ def naive_merge(
             overlap_tail = prev[cutoff:]
             chunks.append(overlap_tail + sec)
             token_counts.append(count_tokens(chunks[-1]))
+            origins.append(idx)
         else:
             chunks[-1] += sec
             token_counts[-1] += tnum
 
-    return [c.strip() for c in chunks if c.strip()]
+    return [(c.strip(), o) for c, o in zip(chunks, origins, strict=True) if c.strip()]
 
 
 def add_table_context(

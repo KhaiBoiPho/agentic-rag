@@ -1,8 +1,7 @@
 """Unit tests for chunking logic — no external services required."""
-import pytest
 
-from app.core.chunking.base import count_tokens, naive_merge
-
+from app.core.chunking.base import count_tokens, naive_merge, naive_merge_with_origins
+from app.core.chunking.table_extract import _resolve, is_ditto, is_unit_ditto
 
 SAMPLE_TEXT = (
     "The quick brown fox jumps over the lazy dog. "
@@ -24,7 +23,7 @@ def test_count_tokens_empty():
 
 def test_naive_merge_respects_budget():
     sections = SAMPLE_TEXT.split(". ")
-    chunks = naive_merge(sections, token_budget=512, overlap_pct=0.15)
+    chunks = naive_merge(sections, chunk_token_num=512, overlap_percent=15)
     for chunk in chunks:
         # Allow up to 1.5x budget for the last partial chunk
         assert count_tokens(chunk) <= 512 * 1.5, f"Chunk exceeds budget: {count_tokens(chunk)}"
@@ -32,10 +31,84 @@ def test_naive_merge_respects_budget():
 
 def test_naive_merge_non_empty_output():
     sections = ["Hello world.", "This is a test."]
-    chunks = naive_merge(sections, token_budget=512, overlap_pct=0.15)
+    chunks = naive_merge(sections, chunk_token_num=512, overlap_percent=15)
     assert len(chunks) >= 1
     assert all(c.strip() for c in chunks)
 
 
 def test_naive_merge_empty_input():
-    assert naive_merge([], token_budget=512, overlap_pct=0.15) == []
+    assert naive_merge([], chunk_token_num=512, overlap_percent=15) == []
+
+
+def test_naive_merge_with_origins_matches_naive_merge():
+    sections = SAMPLE_TEXT.split(". ")
+    plain = naive_merge(sections, chunk_token_num=256)
+    with_origins = naive_merge_with_origins(sections, chunk_token_num=256)
+    assert [t for t, _ in with_origins] == plain
+
+
+def test_naive_merge_origins_point_at_contributing_section():
+    """The origin index is what carries a page number onto a merged chunk."""
+    sections = SAMPLE_TEXT.split(". ")
+    result = naive_merge_with_origins(sections, chunk_token_num=128)
+    assert len(result) > 1, "expected the sample to split into several chunks"
+    origins = [o for _, o in result]
+    assert origins == sorted(origins)
+    assert all(0 <= o < len(sections) for o in origins)
+
+
+# ─── Merged-cell / ditto resolution ────────────────────────────────────────
+
+
+class _FakeRow:
+    """Stands in for pdfplumber's Row: `cells[i] is None` where a taller cell
+    from an earlier row covers this grid position."""
+
+    def __init__(self, cells):
+        self.cells = cells
+
+
+def test_is_ditto_markers():
+    assert is_ditto("-nt-")
+    assert is_ditto(" nt ")
+    assert is_ditto("như trên")
+    assert not is_ditto("-"), "a bare dash is ambiguous outside the unit column"
+    assert not is_ditto("đ/bộ")
+
+
+def test_is_unit_ditto_accepts_bare_dash():
+    assert is_unit_ditto("-")
+    assert is_unit_ditto("-nt-")
+    assert not is_unit_ditto("đ/m")
+
+
+def test_resolve_fills_vertically_merged_cell():
+    """The real failure this fixes: a technical standard stated once for a
+    whole product family left every other row looking standard-less."""
+    grid = [
+        ["1", "DHP-STR02A 30W", "đ/bộ", "CE, ENEC, RoHS", "4.446.000"],
+        ["2", "DHP-STR02A 40W", "-", "", "5.087.250"],
+        ["3", "DHP-STR02A 50W", "-", "", "5.785.500"],
+    ]
+    rows = [
+        _FakeRow([1, 1, 1, 1, 1]),
+        _FakeRow([1, 1, 1, None, 1]),
+        _FakeRow([1, 1, 1, None, 1]),
+    ]
+    out = _resolve(grid, rows)
+    assert [r[3] for r in out] == ["CE, ENEC, RoHS"] * 3
+    # A bare "-" is left alone here; only the price extractor's unit column
+    # resolves it, where "-" cannot be a real value.
+    assert [r[2] for r in out] == ["đ/bộ", "-", "-"]
+
+
+def test_resolve_keeps_genuinely_blank_ruled_cell_blank():
+    grid = [["a", "note"], ["b", ""]]
+    rows = [_FakeRow([1, 1]), _FakeRow([1, 1])]  # both cells really exist
+    assert _resolve(grid, rows)[1][1] == ""
+
+
+def test_resolve_expands_ditto_marker():
+    grid = [["Đèn A", "Công ty TNHH CDE VINA"], ["Đèn B", "-nt-"]]
+    rows = [_FakeRow([1, 1]), _FakeRow([1, 1])]
+    assert _resolve(grid, rows)[1][1] == "Công ty TNHH CDE VINA"

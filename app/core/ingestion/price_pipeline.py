@@ -45,19 +45,23 @@ class PriceExtractionPipeline:
     ) -> AsyncGenerator[dict, None]:
         region = config.get("region", "")
         price_period = config.get("price_period", "")
-        if not region:
-            yield {
-                "stage": "error",
-                "error": "region is required for price_extraction mode",
-                "progress": 0.0,
-                "done": True,
-            }
-            return
 
         source_type = classify_source_file(filename)
 
         doc = await self._doc_repo.create(kb_id=kb_id, user_id=user_id, filename=filename)
         doc_id = str(doc.id)
+
+        # The API rejects a price upload without a region, so this only fires
+        # for a job published some other way. The document row is created
+        # first on purpose: bailing out before creating it (the original
+        # behaviour) left the upload looking silently lost — a job id was
+        # returned, then nothing ever appeared in the KB.
+        if not region:
+            msg = "Thiếu vùng giá (HN | DN | HCM) — không trích xuất được dữ liệu giá."
+            await self._doc_repo.update_status(doc_id, "error", error=msg)
+            yield {"stage": "error", "error": msg, "progress": 0.0, "done": True}
+            return
+
         await self._doc_repo.update_status(doc_id, "processing")
         await self._doc_repo.set_metadata(
             doc_id, {"region": region, "source_type": source_type, "price_period": price_period}
@@ -158,7 +162,9 @@ class PriceExtractionPipeline:
         # 2. Structured price rows -> Postgres
         yield {"stage": "extracting_prices", "progress": 0.7, "done": False}
         try:
-            result = extract_price_rows(content, region=region, source_type=source_type)
+            result = extract_price_rows(
+                content, region=region, source_type=source_type, filename=filename
+            )
         except Exception as exc:
             await self._doc_repo.update_status(doc_id, "error", error=str(exc))
             yield {"stage": "error", "error": str(exc), "progress": 0.0, "done": True}

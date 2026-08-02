@@ -20,6 +20,9 @@ export interface KB {
   document_count: number;
   created_at: number;
   is_system: boolean;
+  /** When true, uploads into this KB also extract structured price rows into
+   *  material_prices (region is then required at upload time). */
+  price_extraction: boolean;
 }
 
 export type DocStatus = "pending" | "processing" | "done" | "error";
@@ -29,6 +32,10 @@ export interface Doc {
   filename: string;
   status: DocStatus;
   chunk_count: number;
+  /** null = not a price document. 0 is meaningful: the file WAS scanned for
+   *  price tables and none were readable. */
+  price_row_count: number | null;
+  price_warning_count: number | null;
   created_at: number;
 }
 
@@ -74,7 +81,10 @@ export interface Usage {
 
 // ── Chat / streaming ───────────────────────────────────────────────────────
 
-export type ChatMode = "chat" | "search" | "research";
+// "agentic" = retrieval across EVERY knowledge base + construction tool
+// calling (price lookup, cost estimate). The other three are single-KB
+// RAG, web search and deep research respectively.
+export type ChatMode = "chat" | "search" | "research" | "agentic";
 
 // A RAG document citation OR a web citation OR an agent tool log.
 export interface RagSource {

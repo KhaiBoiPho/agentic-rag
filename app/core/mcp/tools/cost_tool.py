@@ -35,12 +35,21 @@ import asyncio
 
 from mcp.types import TextContent, Tool
 
+from app.core.construction.project_types import (
+    DEFAULT_PROJECT_TYPE,
+    MATERIAL_SPECS,
+    PROJECT_TYPES,
+    get_project_type,
+)
+
 COST_TOOL = Tool(
     name="calculate_construction_cost",
     description=(
-        "Ước lượng Ý TƯỞNG chi phí VẬT LIỆU thô cho một công trình dân dụng từ diện tích sàn "
-        "(chưa có bản vẽ chi tiết). Trả về khoảng giá kèm giả định — KHÔNG bao gồm nhân công, "
-        "thiết bị, lợi nhuận nhà thầu, VAT, chi phí gián tiếp. Không dùng thay dự toán/hợp đồng."
+        "Ước lượng Ý TƯỞNG chi phí VẬT LIỆU cho một công trình từ diện tích (chưa có bản vẽ "
+        "chi tiết). Hỗ trợ nhiều loại hình: nhà phố, nhà cấp 4, biệt thự, nhà xưởng thép tiền "
+        "chế, nhà kho, sân bê tông/đường nội bộ, san nền, tường rào, vỉa hè lát gạch, cải tạo. "
+        "Trả về khoảng giá kèm giả định — KHÔNG bao gồm nhân công, thiết bị, lợi nhuận nhà "
+        "thầu, VAT, chi phí gián tiếp. Không dùng thay dự toán/hợp đồng."
     ),
     inputSchema={
         "type": "object",
@@ -50,10 +59,26 @@ COST_TOOL = Tool(
                 "description": "Tổng diện tích sàn xây dựng (m2), đã gồm các tầng",
             },
             "region": {"type": "string", "enum": ["HN", "DN", "HCM"]},
+            "project_type": {
+                "type": "string",
+                "enum": list(PROJECT_TYPES.keys()),
+                "default": DEFAULT_PROJECT_TYPE,
+                "description": (
+                    "Loại hình công trình. Quyết định bộ vật liệu và hệ số tiêu hao: "
+                    "nha_pho (nhà phố/nhà ở khung BTCT), nha_cap_4, biet_thu, "
+                    "nha_xuong (nhà thép tiền chế), nha_kho, san_be_tong (sân/đường nội bộ), "
+                    "san_nen (san lấp), tuong_rao (tính theo m2 MẶT TƯỜNG), "
+                    "via_he_lat_gach, cai_tao (sửa chữa không đụng kết cấu)."
+                ),
+            },
             "finish_level": {
                 "type": "string",
                 "enum": ["tho", "hoan_thien_co_ban", "hoan_thien_cao_cap"],
                 "default": "hoan_thien_co_ban",
+                "description": (
+                    "Chỉ có ý nghĩa với loại hình có hoàn thiện (nhà ở, tường rào, cải tạo); "
+                    "bị bỏ qua với sân bê tông, san nền, nhà xưởng."
+                ),
             },
         },
         "required": ["floor_area_m2", "region"],
@@ -181,9 +206,15 @@ def build_cost_facts(data: dict, target_budget: float | None = None) -> str:
     right precision level here in the first place.
     """
     lines = [
-        f"Diện tích: {data['area']:.0f} m² sàn. Vùng: {data['region']}. "
-        f"Mức hoàn thiện: {_FINISH_LABELS.get(data['finish_level'], data['finish_level'])}.",
-        "Chi phí VẬT LIỆU thô (chưa gồm nhân công/thiết bị/lợi nhuận/VAT/gián tiếp).",
+        f"Loại hình: {data.get('project_label', 'Nhà phố / nhà ở dân dụng')}. "
+        f"Quy mô: {data['area']:.0f} {data.get('area_label', 'm² sàn')}. "
+        f"Vùng: {data['region']}."
+        + (
+            f" Mức hoàn thiện: {_FINISH_LABELS.get(data['finish_level'], data['finish_level'])}."
+            if data.get("finish_applies", True)
+            else ""
+        ),
+        "Chi phí VẬT LIỆU (chưa gồm nhân công/thiết bị/lợi nhuận/VAT/gián tiếp).",
         "",
         "Các hạng mục:",
     ]
@@ -246,7 +277,6 @@ async def _compute_cost(args: dict) -> dict:
     """Do the estimation and return structured data (or {'error': msg}).
     Shared by the MCP/agent text path (_format_cost_text) and the streamed
     human-in-the-loop form path (build_cost_facts)."""
-    from app.core.construction import formulas
     from app.core.llm.openrouter import OpenRouterClient
     from app.core.mcp.tools.web_price_fallback import search_web_price
     from app.db.postgres.repositories.material_price_repo import MaterialPriceRepository
@@ -257,18 +287,20 @@ async def _compute_cost(args: dict) -> dict:
     if area <= 0:
         return {"error": "floor_area_m2 phải > 0"}
 
-    coef = _PER_M2_COEFFICIENTS
-    concrete_vol = area * coef["be_tong_m3_per_m2"]
-    steel_kg = area * coef["thep_kg_per_m2"]
-    wall_area = area * coef["tuong_m2_per_m2_san"]
-    paint_area = area * coef["son_m2_per_m2_san"] * _FINISH_MULTIPLIER.get(finish_level, 1.0)
+    project = get_project_type(args.get("project_type"))
+    # The finish multiplier only touches finishing materials, and only for the
+    # types that actually have a finish stage — scaling a concrete yard's
+    # aggregate by "hoàn thiện cao cấp" would be meaningless.
+    finish_mult = _FINISH_MULTIPLIER.get(finish_level, 1.0) if project.finish_applies else 1.0
+    _FINISHING_SLUGS = {"son", "gach_lat"}
 
-    concrete_q = formulas.concrete(concrete_vol, ready_mix=True)
-    steel_q = formulas.rebar_from_geometry(
-        diameter_mm=16, total_length_m=steel_kg / formulas.rebar_unit_weight_kg_per_m(16)
-    )
-    wall_q = formulas.masonry_wall(length_m=wall_area / 3.0, height_m=3.0, thickness_m=0.1)
-    paint_q = formulas.paint(paint_area)
+    demands: list[tuple[str, float]] = []
+    for slug, per_m2 in project.coefficients.items():
+        qty = area * per_m2
+        if slug in _FINISHING_SLUGS:
+            qty *= finish_mult
+        if qty > 0:
+            demands.append((slug, qty))
 
     repo = MaterialPriceRepository()
     llm = OpenRouterClient()
@@ -277,6 +309,7 @@ async def _compute_cost(args: dict) -> dict:
     web_sources: list[dict] = []  # [{index, title, url}] — cited as [n] in the output text
 
     async def price_line(
+        slug: str,
         label: str,
         name_query: str,
         qty: float,
@@ -296,16 +329,34 @@ async def _compute_cost(args: dict) -> dict:
         window the LLM disambiguator ever sees. Relying on the disambiguator
         alone to filter post-hoc doesn't help once the right row never made
         the cut."""
-        candidates = await repo.lookup(
-            region=region,
-            material_name=name_query,
-            unit=unit,
-            exclude_name_keywords=exclude_keywords,
-            limit=15,
-        )
+        spec = MATERIAL_SPECS[slug]
+
+        # Try the material's own unit first, then any unit it is also
+        # published in (tấn for kg-priced materials), converting the price so
+        # every candidate is comparable in `unit`.
+        candidates: list = []
+        factors: list[float] = []
+        for db_unit, factor in [(unit, 1.0), *spec.alt_units]:
+            found = await repo.lookup(
+                region=region,
+                material_name=name_query,
+                unit=db_unit,
+                exclude_name_keywords=exclude_keywords,
+                limit=15,
+            )
+            for c in found:
+                converted = float(c.price_ex_vat) * factor
+                # Bounds catch decimal/unit catastrophes from either source —
+                # see MaterialSpec.price_min for the 1,8 tỷ đ/kg incident.
+                if spec.price_min <= converted <= spec.price_max:
+                    candidates.append(c)
+                    factors.append(factor)
+            if candidates:
+                break
+
         idx = await _disambiguate(llm, target_desc, candidates)
         if idx is not None:
-            unit_price = float(candidates[idx].price_ex_vat)
+            unit_price = float(candidates[idx].price_ex_vat) * factors[idx]
             return {
                 "item": label,
                 "qty": round(qty, 2),
@@ -324,6 +375,10 @@ async def _compute_cost(args: dict) -> dict:
         # with a clickable [n] source and flagged as unverified in the
         # output text; never silently blended with DB-backed confidence.
         web_price, url, title = await search_web_price(target_desc, region)
+        if web_price is not None and not (spec.price_min <= web_price <= spec.price_max):
+            # A scraped number outside the plausible band is a unit mix-up,
+            # not a bargain. Report "no data" rather than publish it.
+            web_price = None
         if web_price is None:
             return {
                 "item": label,
@@ -346,45 +401,25 @@ async def _compute_cost(args: dict) -> dict:
             "_title": title,
         }
 
-    # Run all four material lookups concurrently — each is an independent
-    # DB query + LLM disambiguation (+ possibly a web-price search), and
+    # Run every material lookup concurrently — each is an independent DB
+    # query + LLM disambiguation (+ possibly a web-price search), and
     # serially they stacked up (a region missing 2-3 prices meant 2-3 web
-    # searches back-to-back, ~15s+ each). gather overlaps them.
+    # searches back-to-back, ~15s+ each). gather overlaps them. The set of
+    # materials now comes from the project profile, so a factory shed prices
+    # structural steel and roof sheeting while a concrete yard prices neither.
     results = await asyncio.gather(
-        price_line(
-            "bê tông thương phẩm",
-            "bê tông",
-            concrete_q.quantities["be_tong_thuong_pham"],
-            "m3",
-            "bê tông thương phẩm/bê tông tươi trộn sẵn dùng đổ móng, cột, dầm, sàn nhà dân dụng — "
-            "KHÔNG phải bê tông đúc sẵn dạng tấm/panel/cấu kiện/cống/kè, "
-            "KHÔNG phải cát dùng để trộn bê tông",
-        ),
-        price_line(
-            "thép xây dựng",
-            "thép",
-            sum(steel_q.quantities.values()),
-            "kg",
-            "thép thanh/thép cây/thép cuộn dùng làm cốt thép bê tông (thép xây dựng) — "
-            "KHÔNG phải ống thép, tôn thép, thép mạ kẽm, khung móng thép đúc sẵn",
-            exclude_keywords=["ống thép", "mạ kẽm", "tôn thép", "thép mạ", "dày mạ"],
-        ),
-        price_line(
-            "gạch xây",
-            "gạch",
-            wall_q.quantities["so_vien_gach"],
-            "viên",
-            "gạch xây tường (gạch đặc, gạch rỗng, gạch block bê tông) dùng xây tường nhà — "
-            "KHÔNG phải gạch ốp lát/gạch trang trí bề mặt",
-        ),
-        price_line(
-            "sơn",
-            "sơn",
-            paint_q.quantities["son"],
-            "lít",
-            "sơn nước/sơn phủ tường dùng sơn hoàn thiện công trình dân dụng — "
-            "KHÔNG phải sơn giao thông/sơn kẻ vạch đường",
-        ),
+        *(
+            price_line(
+                slug,
+                MATERIAL_SPECS[slug].label,
+                MATERIAL_SPECS[slug].name_query,
+                qty,
+                MATERIAL_SPECS[slug].unit,
+                MATERIAL_SPECS[slug].target_desc,
+                exclude_keywords=MATERIAL_SPECS[slug].exclude_keywords or None,
+            )
+            for slug, qty in demands
+        )
     )
 
     # Assemble in the fixed material order so citation numbers are stable.
@@ -415,7 +450,12 @@ async def _compute_cost(args: dict) -> dict:
         "area": area,
         "region": region,
         "finish_level": finish_level,
-        "coef": coef,
+        "project_type": project.key,
+        "project_label": project.label,
+        "area_label": project.area_label,
+        "project_note": project.note,
+        "finish_applies": project.finish_applies,
+        "coef": dict(project.coefficients),
         "line_items": line_items,
         "missing": missing,
         "web_sources": web_sources,
@@ -470,11 +510,17 @@ def _format_cost_text(data: dict) -> str:
     area, region, finish_level = data["area"], data["region"], data["finish_level"]
     line_items, missing, web_sources = data["line_items"], data["missing"], data["web_sources"]
     coef = data["coef"]
+    area_label = data.get("area_label", "m² sàn")
 
+    finish_txt = (
+        f" · mức hoàn thiện **{_FINISH_LABELS.get(finish_level, finish_level)}**"
+        if data.get("finish_applies", True)
+        else ""
+    )
     lines = [
-        "### Ước lượng ý tưởng chi phí vật liệu thô",
-        f"**{area:.0f} m² sàn** · vùng **{region}** · "
-        f"mức hoàn thiện **{_FINISH_LABELS.get(finish_level, finish_level)}**",
+        "### Ước lượng ý tưởng chi phí vật liệu",
+        f"**{data.get('project_label', 'Nhà phố / nhà ở dân dụng')}** — "
+        f"**{area:.0f} {area_label}** · vùng **{region}**{finish_txt}",
         "",
         "*(Chưa gồm nhân công, thiết bị, lợi nhuận nhà thầu, VAT, chi phí gián tiếp.)*",
         "",
@@ -520,16 +566,24 @@ def _format_cost_text(data: dict) -> str:
         )
 
     lines.append("")
-    lines.append("<details><summary>Giả định đã dùng (hệ số tiêu hao tham khảo / m² sàn)</summary>")
+    lines.append(
+        f"<details><summary>Giả định đã dùng (hệ số tiêu hao tham khảo / {area_label})</summary>"
+    )
     lines.append("")
     for key, value in coef.items():
-        lines.append(f"- {_COEFFICIENT_LABELS[key]}: {value:g} {_COEFFICIENT_UNITS[key]}")
+        spec = MATERIAL_SPECS.get(key)
+        label = spec.label if spec else key
+        unit = spec.unit if spec else ""
+        lines.append(f"- {label}: {value:g} {unit}/{area_label}")
+    if data.get("project_note"):
+        lines.append("")
+        lines.append(f"- *{data['project_note']}*")
     lines.append("")
     lines.append("</details>")
     lines.append("")
     lines.append(
-        "*Đây chỉ là chi phí vật liệu của 4 hạng mục chính, không phải giá xây nhà trọn gói, "
-        "và không thay thế dự toán từ hồ sơ thiết kế đã duyệt, "
+        f"*Đây chỉ là chi phí vật liệu chính của {len(coef)} hạng mục, không phải giá xây "
+        "trọn gói, và không thay thế dự toán từ hồ sơ thiết kế đã duyệt, "
         "định mức hiện hành hoặc báo giá hợp lệ.*"
     )
 

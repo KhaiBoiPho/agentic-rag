@@ -16,15 +16,21 @@ export default function KbPage() {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
+  const [priceExtraction, setPriceExtraction] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
     try {
-      await api.post("/api/v1/kb/", { name, description: desc || undefined });
+      await api.post("/api/v1/kb/", {
+        name,
+        description: desc || undefined,
+        price_extraction: priceExtraction,
+      });
       setName("");
       setDesc("");
+      setPriceExtraction(false);
       setCreating(false);
       await loadKbs();
     } catch (e) {
@@ -68,6 +74,20 @@ export default function KbPage() {
                 <label>{t.kb.description}</label>
                 <input className="control" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder={t.kb.descPh} />
               </div>
+              <div className="field" style={{ marginBottom: 14 }}>
+                <label
+                  style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={priceExtraction}
+                    onChange={(e) => setPriceExtraction(e.target.checked)}
+                    style={{ width: 16, height: 16, accentColor: "var(--brand)", cursor: "pointer" }}
+                  />
+                  {t.kb.priceExtraction}
+                </label>
+                <p className="sub" style={{ margin: "6px 0 0 24px" }}>{t.kb.priceExtractionHint}</p>
+              </div>
               <button className="btn btn-primary" type="submit">{t.common.create}</button>
             </form>
           )}
@@ -79,6 +99,11 @@ export default function KbPage() {
                   <span className="sq" />
                   <h3>{kb.name}</h3>
                   {kb.is_system && <span className="sys" style={{ position: "static" }}>{t.common.system}</span>}
+                  {kb.price_extraction && (
+                    <span className="sys price" style={{ position: "static" }} title={t.kb.priceExtractionHint}>
+                      {t.kb.priceBadge}
+                    </span>
+                  )}
                 </div>
                 <div className="desc">{kb.description || "—"}</div>
                 <div className="foot">
