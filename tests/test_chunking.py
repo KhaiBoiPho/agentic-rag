@@ -1,6 +1,14 @@
 """Unit tests for chunking logic — no external services required."""
 
-from app.core.chunking.base import count_tokens, naive_merge, naive_merge_with_origins
+from app.core.chunking.base import (
+    MAX_EMBED_TOKENS,
+    count_tokens,
+    embed_token_count,
+    naive_merge,
+    naive_merge_with_origins,
+    split_oversized_table_chunk,
+)
+from app.core.chunking.models import Chunk, ChunkType
 from app.core.chunking.table_extract import _resolve, is_ditto, is_unit_ditto
 
 SAMPLE_TEXT = (
@@ -112,3 +120,47 @@ def test_resolve_expands_ditto_marker():
     grid = [["Đèn A", "Công ty TNHH CDE VINA"], ["Đèn B", "-nt-"]]
     rows = [_FakeRow([1, 1]), _FakeRow([1, 1])]
     assert _resolve(grid, rows)[1][1] == "Công ty TNHH CDE VINA"
+
+
+# ─── Embedding budget ──────────────────────────────────────────────────────
+
+
+def _table_chunk(n_rows: int, context: str = "") -> Chunk:
+    rows = ["<tr><th>Tên</th><th>Đơn vị</th><th>Giá</th></tr>"]
+    rows += [
+        f"<tr><td>Vật liệu số {i}</td><td>tấn</td><td>1.450.000</td></tr>" for i in range(n_rows)
+    ]
+    html = "<table>\n" + "\n".join(rows) + "\n</table>"
+    return Chunk(
+        content=html,
+        chunk_type=ChunkType.TABLE,
+        context_above=context,
+        context_below=context,
+        token_count=count_tokens(html),
+    )
+
+
+def test_embed_token_count_includes_context():
+    """What the embeddings API sees is full_content, not content."""
+    chunk = _table_chunk(5, context="ngữ cảnh " * 50)
+    assert embed_token_count(chunk) > chunk.token_count
+
+
+def test_split_leaves_room_for_context():
+    """The real bug this guards: a chunk whose content fits the budget but
+    whose content+context does not still failed the whole embedding batch."""
+    context = "ngữ cảnh bao quanh bảng giá. " * 60
+    chunk = _table_chunk(900, context=context)
+    assert embed_token_count(chunk) > MAX_EMBED_TOKENS
+
+    pieces = split_oversized_table_chunk(chunk)
+    assert len(pieces) > 1
+    for piece in pieces:
+        assert embed_token_count(piece) <= MAX_EMBED_TOKENS
+
+
+def test_split_keeps_header_in_every_piece():
+    pieces = split_oversized_table_chunk(_table_chunk(900))
+    assert len(pieces) > 1
+    for piece in pieces:
+        assert "<th>Tên</th>" in piece.content

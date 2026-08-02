@@ -9,7 +9,11 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncGenerator
 
-from app.core.chunking.base import MAX_EMBED_TOKENS, split_oversized_table_chunk
+from app.core.chunking.base import (
+    MAX_EMBED_TOKENS,
+    embed_token_count,
+    split_oversized_table_chunk,
+)
 from app.core.chunking.dispatcher import ChunkDispatcher
 from app.core.llm.openrouter import OpenRouterClient
 from app.db.postgres.repositories.document_repo import DocumentRepository
@@ -83,12 +87,12 @@ class IngestionPipeline:
             except Exception as exc:
                 logger.warning("OCR fallback failed doc_id=%s file=%s: %s", doc_id, filename, exc)
 
-        oversized_count = sum(1 for c in chunks if c.token_count > MAX_EMBED_TOKENS)
+        oversized_count = sum(1 for c in chunks if embed_token_count(c) > MAX_EMBED_TOKENS)
         if oversized_count:
             expanded: list = []
             for c in chunks:
                 expanded.extend(split_oversized_table_chunk(c))
-            still_oversized = sum(1 for c in expanded if c.token_count > MAX_EMBED_TOKENS)
+            still_oversized = sum(1 for c in expanded if embed_token_count(c) > MAX_EMBED_TOKENS)
             if still_oversized:
                 logger.warning(
                     "doc_id=%s: %d chunk(s) still exceed %d tokens after table-splitting "
@@ -97,7 +101,7 @@ class IngestionPipeline:
                     still_oversized,
                     MAX_EMBED_TOKENS,
                 )
-                expanded = [c for c in expanded if c.token_count <= MAX_EMBED_TOKENS]
+                expanded = [c for c in expanded if embed_token_count(c) <= MAX_EMBED_TOKENS]
             logger.info(
                 "doc_id=%s: split %d oversized table chunk(s) into %d smaller chunks",
                 doc_id,

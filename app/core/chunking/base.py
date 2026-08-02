@@ -24,6 +24,18 @@ MAX_EMBED_TOKENS = 8000
 _TABLE_ROW_RE = re.compile(r"<tr>.*?</tr>", re.DOTALL)
 
 
+def embed_token_count(chunk: Chunk) -> int:
+    """Tokens the embeddings API will actually see for this chunk.
+
+    `Chunk.token_count` counts `content` alone, but what gets embedded is
+    `full_content` = context_above + content + context_below (see
+    models.py). Guarding on token_count let a 7.900-token table chunk plus
+    its 2×128 tokens of context sail past an 8.000 limit and hit the API's
+    8.192 ceiling, failing the whole batch — which is exactly what the guard
+    exists to prevent."""
+    return count_tokens(chunk.full_content)
+
+
 def split_oversized_table_chunk(chunk: Chunk, max_tokens: int = MAX_EMBED_TOKENS) -> list[Chunk]:
     """Split an over-budget HTML TABLE chunk into several smaller chunks,
     repeating the header row (first <tr>) in each so column context isn't
@@ -32,7 +44,7 @@ def split_oversized_table_chunk(chunk: Chunk, max_tokens: int = MAX_EMBED_TOKENS
     already produced) — callers should still guard against oversized chunks
     reaching the embeddings API in that case.
     """
-    if chunk.token_count <= max_tokens:
+    if embed_token_count(chunk) <= max_tokens:
         return [chunk]
     if chunk.chunk_type != ChunkType.TABLE:
         return [chunk]
@@ -40,6 +52,12 @@ def split_oversized_table_chunk(chunk: Chunk, max_tokens: int = MAX_EMBED_TOKENS
     rows = _TABLE_ROW_RE.findall(chunk.content)
     if len(rows) < 2:
         return [chunk]
+
+    # Every produced chunk keeps the same context_above/context_below, so the
+    # row budget has to leave room for them — otherwise the split pieces
+    # individually pass the check and the batch still fails at the API.
+    context_overhead = embed_token_count(chunk) - chunk.token_count
+    max_tokens = max(max_tokens - context_overhead, 1)
 
     header, body_rows = rows[0], rows[1:]
     header_tokens = count_tokens(header) + count_tokens("<table>\n\n</table>")

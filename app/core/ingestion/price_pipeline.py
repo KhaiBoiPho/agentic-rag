@@ -16,7 +16,11 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncGenerator
 
-from app.core.chunking.base import MAX_EMBED_TOKENS, split_oversized_table_chunk
+from app.core.chunking.base import (
+    MAX_EMBED_TOKENS,
+    embed_token_count,
+    split_oversized_table_chunk,
+)
 from app.core.chunking.dispatcher import ChunkDispatcher
 from app.core.ingestion.price_extractor import classify_source_file, extract_price_rows
 from app.core.llm.openrouter import OpenRouterClient
@@ -105,12 +109,12 @@ class PriceExtractionPipeline:
                 {"region": region, "source_type": source_type, "price_period": price_period}
             )
 
-        oversized_count = sum(1 for c in chunks if c.token_count > MAX_EMBED_TOKENS)
+        oversized_count = sum(1 for c in chunks if embed_token_count(c) > MAX_EMBED_TOKENS)
         if oversized_count:
             expanded: list = []
             for c in chunks:
                 expanded.extend(split_oversized_table_chunk(c))
-            still_oversized = sum(1 for c in expanded if c.token_count > MAX_EMBED_TOKENS)
+            still_oversized = sum(1 for c in expanded if embed_token_count(c) > MAX_EMBED_TOKENS)
             if still_oversized:
                 logger.warning(
                     "doc_id=%s: %d chunk(s) still exceed %d tokens after table-splitting — "
@@ -120,7 +124,7 @@ class PriceExtractionPipeline:
                     still_oversized,
                     MAX_EMBED_TOKENS,
                 )
-                expanded = [c for c in expanded if c.token_count <= MAX_EMBED_TOKENS]
+                expanded = [c for c in expanded if embed_token_count(c) <= MAX_EMBED_TOKENS]
             logger.info(
                 "doc_id=%s: split %d oversized price-table chunk(s) into %d smaller chunks",
                 doc_id,
