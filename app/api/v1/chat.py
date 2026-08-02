@@ -208,6 +208,23 @@ async def _resolve_rag_scope(
     return body.kb_id, None
 
 
+async def _retrieval_query(llm, message: str, history: list[dict]) -> str:
+    """Rewrite a short deictic follow-up into a standalone searchable question.
+
+    "còn ở Đà Nẵng", "khu vực thành phố Hồ Chí Minh" carry almost no searchable
+    terms on their own — embedding them retrieves noise and the model loses the
+    thread, which showed up as "Plain chat — no RAG" on the very turns that
+    should have continued a price lookup. Falls back to prepending the previous
+    user turn when the rewrite is unavailable."""
+    if not history or len(message.split()) > 8:
+        return message
+    condensed = await condense_followup(llm, message, history)
+    if condensed:
+        return condensed
+    prev_user = next((m["content"] for m in reversed(history) if m.get("role") == "user"), None)
+    return f"{prev_user} {message}" if prev_user else message
+
+
 class HistoryMessage(BaseModel):
     id: str
     role: str  # "user" | "assistant"
@@ -401,7 +418,12 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
         # Only in the default persona: once a KB/project or skill is active,
         # "on topic" is whatever that KB/skill defines, not construction
         # specifically — see app/core/chat/topic_guard.py.
-        if not body.kb_id and not body.project_id and not body.skill_id:
+        # `all_kbs` is a knowledge-base scope just like kb_id/project_id, so the
+        # same exemption applies: once documents are in scope, "on topic" is
+        # whatever they cover. Without this the guard saw follow-ups in
+        # isolation — "còn ở hồ chí minh" alone reads as off-topic — and
+        # refused mid-conversation about cable prices.
+        if not body.kb_id and not body.project_id and not body.skill_id and not body.all_kbs:
             if await is_off_topic(body.message, llm):
                 reply = refusal_reply()
                 if body.conversation_id:
@@ -446,7 +468,7 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
             if body.use_rag and agent_kb_scope:
                 try:
                     agent_chunks = await retriever.search(
-                        query=body.message,
+                        query=await _retrieval_query(llm, body.message, agent_history),
                         kb_id=agent_kb_scope,
                         top_k=body.top_k,
                         score_threshold=body.score_threshold,
@@ -559,18 +581,9 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
         # noise, so the model loses the thread. Rewrite it into a standalone
         # question with a cheap model (condense step). Falls back to prepending
         # the previous user turn if the rewrite is unavailable.
-        retrieval_query = body.message
-        if body.use_rag and history and len(body.message.split()) <= 8:
-            condensed = await condense_followup(llm, body.message, history)
-            if condensed:
-                retrieval_query = condensed
-            else:
-                prev_user = next(
-                    (m["content"] for m in reversed(history) if m.get("role") == "user"),
-                    None,
-                )
-                if prev_user:
-                    retrieval_query = f"{prev_user} {body.message}"
+        retrieval_query = (
+            await _retrieval_query(llm, body.message, history) if body.use_rag else body.message
+        )
 
         # On the pricing KB, region-aware retrieval. Detect from the (possibly
         # condensed) retrieval query so a follow-up like "còn Đà Nẵng?" still

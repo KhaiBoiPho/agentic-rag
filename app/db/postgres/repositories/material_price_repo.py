@@ -53,6 +53,21 @@ _STOPWORDS = {
 _MIN_WORD_LEN = 2
 
 
+def _has_word(col, word: str):
+    """`word` must appear as a WHOLE word in `col`, not as a substring.
+
+    `LIKE '%trung%'` matches "Miền Trung" inside a branch address, and
+    `'%dong%'` matches "Thanh Khê Đông" — so a question about the sand supplier
+    "Trung Đông" came back with waterproofing paint from Đà Nẵng, because both
+    fragments happened to occur in that row's manufacturer string. A regex
+    word boundary keeps the tolerance that matters (extra words between the
+    user's words) without the accidental collisions.
+
+    Tokens come from `_match_words`, which yields `[0-9a-z]+` only, so there is
+    nothing to escape. pg_trgm's GIN index still serves `~`."""
+    return func.lower(func.immutable_unaccent(col)).op("~")(rf"\m{word}\M")
+
+
 def _norm_name():
     """material_name lower-cased and stripped of diacritics, matching the
     expression the GIN index in migration 0009 is built on."""
@@ -112,9 +127,10 @@ class MaterialPriceRepository:
 
     async def lookup(
         self,
-        region: str,
+        region: str | None = None,
         material_category: str | None = None,
         material_name: str | None = None,
+        manufacturer: str | None = None,
         unit: str | None = None,
         exclude_name_keywords: list[str] | None = None,
         limit: int = 10,
@@ -140,28 +156,130 @@ class MaterialPriceRepository:
         keeps the match strict (all of them, not any) while tolerating extra
         words between them, and the survivors are ranked by trigram
         similarity so the closest name comes first."""
+        rows = await self._lookup(
+            region,
+            material_category,
+            material_name,
+            manufacturer,
+            unit,
+            exclude_name_keywords,
+            limit,
+        )
+        if rows:
+            return rows
+        # `material_category` is inconsistently populated in this dataset —
+        # sometimes a real category, sometimes a vendor name, sometimes a whole
+        # descriptive phrase ("Cáp vặn xoắn hạ thế -0,6/1 kV- (2 lõi…)"). A
+        # model passing a sensible category like "dây, cáp điện" then matches
+        # nothing and takes the entire lookup down with it, even when name and
+        # manufacturer alone would have found the rows. Treat it as a hint:
+        # try with it, and if that yields nothing, drop it and try again.
+        if material_category:
+            rows = await self._lookup(
+                region, None, material_name, manufacturer, unit, exclude_name_keywords, limit
+            )
+            if rows:
+                return rows
+        return await self._lookup_raw(region, material_name, manufacturer, limit)
+
+    async def _lookup_raw(
+        self, region: str | None, material_name: str | None, manufacturer: str | None, limit: int
+    ) -> list[MaterialPrice]:
+        """Last resort: search `raw_row_text`, the whole original row.
+
+        Some names a user asks by are in a column the extractor does not map to
+        its own field. "Cửa hàng VLXD Trung Đông" is a point of sale recorded
+        under commercial terms, while `manufacturer` on that row holds the
+        quarry company — so the shop is unfindable through any mapped column,
+        yet it is right there in the row. Every word must still appear, and
+        this only runs after name and manufacturer have both produced nothing,
+        so a match means the phrase genuinely occurs in that source row."""
+        term = manufacturer or material_name
+        words = _match_words(term) if term else []
+        # Three words minimum, not two. `raw_row_text` is the entire source row
+        # — technical standards, addresses, delivery notes — so short Vietnamese
+        # syllables collide constantly: "Trung Đông" as two words also matched
+        # rows containing "Trung Quốc" and "đồng", answering a question about a
+        # sand supplier with waterproofing paint from another province. A full
+        # name ("Cửa hàng VLXD Trung Đông") clears the bar; an ambiguous
+        # fragment returns nothing, which is the honest result.
+        if len(words) < 3:
+            return []
         async with get_session() as s:
-            q = select(MaterialPrice).where(MaterialPrice.region == region)
+            q = select(MaterialPrice)
+            if region:
+                q = q.where(MaterialPrice.region == region)
+            for w in words:
+                q = q.where(_has_word(MaterialPrice.raw_row_text, w))
+            q = q.order_by(
+                MaterialPrice.price_period.desc().nulls_last(),
+                MaterialPrice.created_at.desc(),
+            ).limit(limit)
+            return list((await s.execute(q)).scalars().all())
+
+    async def _lookup(
+        self,
+        region: str | None,
+        material_category: str | None,
+        material_name: str | None,
+        manufacturer: str | None,
+        unit: str | None,
+        exclude_name_keywords: list[str] | None,
+        limit: int,
+    ) -> list[MaterialPrice]:
+        async with get_session() as s:
+            # Region is optional: a question naming only a company ("công ty X
+            # bán những loại cát nào") has no province in it, and forcing one
+            # made the model guess — it picked HN for a supplier that only
+            # appears in HCM and got nothing. Searching all regions and
+            # labelling each row is honest; guessing is not.
+            q = select(MaterialPrice)
+            if region:
+                q = q.where(MaterialPrice.region == region)
             if material_category:
-                q = q.where(MaterialPrice.material_category.ilike(f"%{material_category}%"))
+                # Word-wise for the same reason as material_name. The stored
+                # categories in this dataset are whole descriptive phrases
+                # ("Cáp vặn xoắn hạ thế -0,6/1 kV- (2 lõi, ruột nhôm…)"), so a
+                # model passing a natural category like "dây, cáp điện" matched
+                # nothing and the whole lookup came back empty.
+                for w in _match_words(material_category):
+                    q = q.where(_has_word(MaterialPrice.material_category, w))
+
+            if manufacturer:
+                # Matched word-wise for the same reason material_name is: the
+                # stored value is a full legal name ("Công ty Cổ Phần dây cáp
+                # Điện Việt Nam - Cadivi") while users type the brand alone
+                # ("CADIVI"). A whole-phrase ILIKE finds neither direction.
+                for w in _match_words(manufacturer):
+                    q = q.where(_has_word(MaterialPrice.manufacturer, w))
 
             def finish(base, words: list[str]):
                 stmt = base
                 for w in words:
-                    stmt = stmt.where(_norm_name().like(f"%{w}%"))
+                    stmt = stmt.where(_has_word(MaterialPrice.material_name, w))
                 if unit:
                     stmt = stmt.where(MaterialPrice.unit.ilike(f"%{unit}%"))
                 for kw in exclude_name_keywords or []:
                     stmt = stmt.where(~MaterialPrice.material_name.ilike(f"%{kw}%"))
-                order = (
-                    [
+                order = []
+                if words:
+                    order.append(
                         func.similarity(
                             _norm_name(), _strip_accents(material_name or "").lower()
                         ).desc()
-                    ]
-                    if words
-                    else []
-                )
+                    )
+                if manufacturer:
+                    # Two common words can each occur as a whole word in an
+                    # unrelated string — "Chi Nhánh Miền Trung … Thanh Khê
+                    # Đông" satisfies a search for "Trung Đông". Nothing rules
+                    # that out as a match, so rank instead: the row whose
+                    # manufacturer reads most like what was asked comes first.
+                    order.append(
+                        func.similarity(
+                            func.lower(func.immutable_unaccent(MaterialPrice.manufacturer)),
+                            _strip_accents(manufacturer).lower(),
+                        ).desc()
+                    )
                 return stmt.order_by(
                     *order,
                     MaterialPrice.price_period.desc().nulls_last(),
@@ -216,11 +334,17 @@ class MaterialPriceRepository:
                     return rows
             return []
 
-    async def _word_frequencies(self, session, region: str, words: list[str]) -> dict[str, int]:
-        """How many rows in this region contain each word — one round trip."""
+    async def _word_frequencies(
+        self, session, region: str | None, words: list[str]
+    ) -> dict[str, int]:
+        """How many rows contain each word — one round trip, region-scoped when
+        a region was given."""
         cols = [
-            func.count().filter(_norm_name().like(f"%{w}%")).label(f"w{i}")
+            func.count().filter(_has_word(MaterialPrice.material_name, w)).label(f"w{i}")
             for i, w in enumerate(words)
         ]
-        row = (await session.execute(select(*cols).where(MaterialPrice.region == region))).one()
+        stmt = select(*cols)
+        if region:
+            stmt = stmt.where(MaterialPrice.region == region)
+        row = (await session.execute(stmt)).one()
         return dict(zip(words, row, strict=True))

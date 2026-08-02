@@ -12,10 +12,17 @@ from mcp.types import TextContent, Tool
 PRICE_LOOKUP_TOOL = Tool(
     name="lookup_material_price",
     description=(
-        "Tra cứu đơn giá vật liệu xây dựng đã công bố hoặc báo giá nhà cung cấp, "
-        "theo vùng (HN|DN|HCM) và tên/nhóm vật liệu. Trả về giá mới nhất kèm nguồn, "
-        "kỳ công bố và cơ sở giá (tại mỏ / tại chân công trình). "
-        "Trả 'không tìm thấy' thay vì suy đoán khi thiếu dữ liệu."
+        "Tra cứu vật liệu xây dựng trong dữ liệu giá đã công bố và báo giá nhà cung cấp, "
+        "theo vùng (HN|DN|HCM). Trả về tên vật liệu, đơn giá, đơn vị, quy cách, "
+        "nhà sản xuất, kỳ công bố và cơ sở giá (tại mỏ / tại chân công trình).\n"
+        "DÙNG CÔNG CỤ NÀY CHO CẢ HAI LOẠI CÂU HỎI:\n"
+        "  1. Hỏi GIÁ — 'giá xi măng PCB40 bao nhiêu' → truyền material_name.\n"
+        "  2. Hỏi DANH MỤC — 'công ty X bán/sản xuất những loại vật liệu nào', "
+        "'có những loại cát nào' → truyền manufacturer và/hoặc material_category. "
+        "Kết quả trả về chính là danh sách sản phẩm cần liệt kê.\n"
+        "Có thể truyền RIÊNG manufacturer mà không cần material_name. "
+        "Trả 'không tìm thấy' thay vì suy đoán khi thiếu dữ liệu — TUYỆT ĐỐI không "
+        "liệt kê sản phẩm từ kiến thức chung khi công cụ không trả về gì."
     ),
     inputSchema={
         "type": "object",
@@ -23,7 +30,11 @@ PRICE_LOOKUP_TOOL = Tool(
             "region": {
                 "type": "string",
                 "enum": ["HN", "DN", "HCM"],
-                "description": "Vùng giá: Hà Nội | Đà Nẵng | TPHCM",
+                "description": (
+                    "Vùng giá: Hà Nội | Đà Nẵng | TPHCM. BỎ TRỐNG nếu câu hỏi không nêu "
+                    "vùng — khi đó công cụ tra cả 3 vùng và ghi rõ vùng ở từng dòng. "
+                    "ĐỪNG đoán vùng."
+                ),
             },
             "material_category": {
                 "type": "string",
@@ -33,8 +44,16 @@ PRICE_LOOKUP_TOOL = Tool(
                 "type": "string",
                 "description": "Tên vật liệu cụ thể, vd 'xi măng PCB40'",
             },
+            "manufacturer": {
+                "type": "string",
+                "description": (
+                    "Nhà sản xuất / thương hiệu, vd 'CADIVI', 'Hoà Phát', 'Vicem Hà Tiên'. "
+                    "Dùng khi câu hỏi nêu tên công ty — nhiều bảng giá đặt thương hiệu ở "
+                    "cột riêng chứ không nằm trong tên vật liệu."
+                ),
+            },
         },
-        "required": ["region"],
+        "required": [],
     },
 )
 
@@ -44,9 +63,10 @@ async def handle_lookup_material_price(args: dict) -> list[TextContent]:
 
     repo = MaterialPriceRepository()
     rows = await repo.lookup(
-        region=args["region"],
+        region=args.get("region") or None,
         material_category=args.get("material_category"),
         material_name=args.get("material_name"),
+        manufacturer=args.get("manufacturer"),
         limit=10,
     )
 
@@ -55,17 +75,18 @@ async def handle_lookup_material_price(args: dict) -> list[TextContent]:
             TextContent(
                 type="text",
                 text=(
-                    f"Không tìm thấy giá cho vùng={args['region']}, "
+                    f"Không tìm thấy giá cho vùng={args.get('region') or 'tất cả'}, "
                     f"category={args.get('material_category', '-')}, "
-                    f"name={args.get('material_name', '-')}. "
+                    f"name={args.get('material_name', '-')}, "
+                    f"nhà sản xuất={args.get('manufacturer', '-')}. "
                     "Không suy đoán giá — cần bổ sung dữ liệu nguồn hoặc mở rộng tiêu chí tìm kiếm."
                 ),
             )
         ]
 
     lines = [
-        "| Vật liệu | Đơn giá | Điều kiện giao | Kỳ | Nguồn |",
-        "|---|---:|---|---|---|",
+        "| Vật liệu | Vùng | Đơn giá | Điều kiện giao | Kỳ | Nguồn |",
+        "|---|---|---:|---|---|---|",
     ]
     for r in rows:
         basis = {
@@ -82,7 +103,7 @@ async def handle_lookup_material_price(args: dict) -> list[TextContent]:
         name = r.material_name + (f" ({r.spec})" if r.spec else "")
         source_cell = source + (f" — {r.manufacturer}" if r.manufacturer else "")
         lines.append(
-            f"| {name} | **{r.price_ex_vat:,.0f} đ**/{r.unit} | {basis} "
+            f"| {name} | {r.region} | **{r.price_ex_vat:,.0f} đ**/{r.unit} | {basis} "
             f"| {period} | {source_cell} |"
         )
 
