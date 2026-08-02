@@ -150,12 +150,31 @@ class OpenRouterClient:
 
     # ─── Vision OCR (scanned/image-only PDF pages) ───────────────────────────
 
+    _PLAIN_OCR_PROMPT = (
+        "Transcribe all readable text from this document page image exactly as "
+        "it appears, preserving table structure as plain rows/columns where "
+        "present. Output only the transcribed text, no commentary. If the page "
+        "has no readable text, output nothing."
+    )
+
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8))
-    async def vision_ocr(self, image_b64: str, model: str | None = None) -> str:
-        """Transcribe a page image to plain text via an OpenRouter vision model.
+    async def vision_ocr(
+        self,
+        image_b64: str,
+        model: str | None = None,
+        prompt: str | None = None,
+        max_tokens: int = 4096,
+    ) -> str:
+        """Transcribe a page image via an OpenRouter vision model.
 
         Used as a fallback when PyMuPDF/pdfplumber extract no text/tables from
-        a PDF page (scanned image with no text layer)."""
+        a PDF page (scanned image with no text layer).
+
+        `prompt` overrides the default plain-text instruction — the structured
+        pass in ocr_fallback asks for HTML tables instead, and cross-checks its
+        numbers against a plain-text pass of the same image. `max_tokens` is
+        raised for that pass because HTML markup roughly doubles the output
+        length of a dense price table."""
         model = model or settings.openrouter_vision_model
         resp = await self._client.chat.completions.create(
             model=model,
@@ -163,16 +182,7 @@ class OpenRouterClient:
                 {
                     "role": "user",
                     "content": [
-                        {
-                            "type": "text",
-                            "text": (
-                                "Transcribe all readable text from this document page "
-                                "image exactly as it appears, preserving table structure "
-                                "as plain rows/columns where present. Output only the "
-                                "transcribed text, no commentary. If the page has no "
-                                "readable text, output nothing."
-                            ),
-                        },
+                        {"type": "text", "text": prompt or self._PLAIN_OCR_PROMPT},
                         {
                             "type": "image_url",
                             "image_url": {"url": f"data:image/png;base64,{image_b64}"},
@@ -181,6 +191,6 @@ class OpenRouterClient:
                 }
             ],
             temperature=0.0,
-            max_tokens=4096,
+            max_tokens=max_tokens,
         )
         return (resp.choices[0].message.content or "").strip()

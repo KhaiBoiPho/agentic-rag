@@ -164,3 +164,77 @@ def test_split_keeps_header_in_every_piece():
     assert len(pieces) > 1
     for piece in pieces:
         assert "<th>Tên</th>" in piece.content
+
+
+# ─── OCR structured pass ───────────────────────────────────────────────────
+
+from app.core.ingestion.ocr_fallback import (  # noqa: E402
+    _normalise,
+    _numbers,
+    _parse_tables,
+    _verify,
+)
+from app.core.ingestion.price_extractor import (  # noqa: E402
+    _fill_table_wide_unit,
+    _is_legend_row,
+)
+
+_PAGE = """Mức giá niêm yết
+<table>
+<tr><td>STT</td><td>Tên vật liệu</td><td>Đơn vị</td><td>Giá bán</td></tr>
+<tr><td>[1]</td><td>[2]</td><td>[3]</td><td>[4]</td></tr>
+<tr><td>1</td><td>XM Power Cement</td><td>Tấn</td><td>1.287.037</td></tr>
+<tr><td>2</td><td>XM Hà Tiên PCB40</td><td></td><td>1.717.593</td></tr>
+</table>
+Ghi chú: giá chưa gồm VAT."""
+
+
+def test_parse_tables_splits_html_from_prose():
+    tables, prose = _parse_tables(_PAGE)
+    assert len(tables) == 1
+    assert tables[0][2] == ["1", "XM Power Cement", "Tấn", "1.287.037"]
+    assert "Mức giá niêm yết" in prose and "<table" not in prose
+
+
+def test_normalise_pads_short_rows_on_the_right():
+    """Leading columns must stay aligned — the column mapping depends on them."""
+    grid = _normalise([["a", "b", "c"], ["d", "e"], ["f", "g", "h"]])
+    assert grid[1] == ["d", "e", ""]
+
+
+def test_bracketed_index_row_is_a_legend_row():
+    """ "[1] [2] [3]" was parsed as data, yielding a product named "[3]"."""
+    assert _is_legend_row(["[1]", "[2]", "[3]", "[4]"])
+    assert _is_legend_row(["1", "2", "3"])
+    assert not _is_legend_row(["1", "XM Power Cement", "Tấn"])
+
+
+def test_verify_blanks_only_uncorroborated_numbers():
+    """A price the independent pass never saw becomes empty, not wrong."""
+    grid = [["XM A", "1.287.037"], ["XM B", "9.999.999"]]
+    out, blanked = _verify(grid, _numbers("giá 1.287.037 đồng"))
+    assert blanked == 1
+    assert out[0][1] == "1.287.037"
+    assert out[1] == ["XM B", ""]
+
+
+def test_numbers_ignores_separator_style():
+    assert _numbers("1.287.037") == _numbers("1,287,037")
+
+
+def test_fill_table_wide_unit_fills_only_the_unit_column():
+    """A unit merged down the whole sheet is placed once by OCR; a note
+    printed against one row must NOT be spread the same way."""
+    rows = [
+        ["1", "XM A", "", "Hàng đặt", "1.287.037"],
+        ["2", "XM B", "Tấn", "", "1.717.593"],
+        ["3", "XM C", "", "", "1.703.704"],
+    ]
+    out = _fill_table_wide_unit(rows, unit_col=2)
+    assert [r[2] for r in out] == ["Tấn", "Tấn", "Tấn"]
+    assert [r[3] for r in out] == ["Hàng đặt", "", ""]
+
+
+def test_fill_table_wide_unit_leaves_per_row_units_alone():
+    rows = [["1", "A", "Tấn", "1"], ["2", "B", "m3", "2"], ["3", "C", "", "3"]]
+    assert _fill_table_wide_unit(rows, unit_col=2)[2][2] == ""

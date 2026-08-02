@@ -88,19 +88,25 @@ class PriceExtractionPipeline:
             yield {"stage": "error", "error": str(exc), "progress": 0.0, "done": True}
             return
 
+        # Tables recovered by OCR, if any — a scanned PDF yields nothing to
+        # pdfplumber, so without these its price rows would be lost entirely.
+        ocr_tables = None
         if not chunks and filename.lower().endswith(".pdf"):
             yield {"stage": "ocr", "progress": 0.2, "done": False}
             try:
-                from app.core.ingestion.ocr_fallback import ocr_pdf_to_chunks
+                from app.core.ingestion.ocr_fallback import ocr_pdf_to_document
 
-                chunks = await ocr_pdf_to_chunks(
+                ocr = await ocr_pdf_to_document(
                     content,
                     filename,
                     doc_id,
                     kb_id,
                     chunk_token_num=config.get("chunk_token_num", 512),
                     overlap_percent=config.get("chunk_overlap_pct", 15),
+                    table_context_size=config.get("table_context_size", 128),
                 )
+                chunks = ocr.chunks
+                ocr_tables = ocr.tables or None
             except Exception as exc:
                 logger.warning("OCR fallback failed doc_id=%s file=%s: %s", doc_id, filename, exc)
 
@@ -167,7 +173,14 @@ class PriceExtractionPipeline:
         yield {"stage": "extracting_prices", "progress": 0.7, "done": False}
         try:
             result = extract_price_rows(
-                content, region=region, source_type=source_type, filename=filename
+                content,
+                region=region,
+                source_type=source_type,
+                filename=filename,
+                tables=ocr_tables,
+                # OCR grids carry no cell geometry, so a table-wide merged
+                # unit needs the textual fallback — see _fill_table_wide_unit.
+                assume_column_merges=ocr_tables is not None,
             )
         except Exception as exc:
             await self._doc_repo.update_status(doc_id, "error", error=str(exc))

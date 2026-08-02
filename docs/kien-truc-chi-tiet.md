@@ -389,13 +389,69 @@ tự DOM, `p`→text, `tbl`→HTML; text gộp `naive_merge`, bảng độc lậ
   chunk_id** để trích dẫn bám đúng mục nguồn.
 - `.txt`: cắt theo đoạn (dòng trống) rồi `naive_merge`.
 
-### 2.12. OCR fallback cho PDF scan
+### 2.12. OCR fallback cho PDF scan — hai lượt, hai model khác nhau
 
-[ocr_fallback.py](../app/core/ingestion/ocr_fallback.py). Nếu PdfChunker trả **0
-chunk** (PDF chỉ là ảnh scan, không có lớp text) → render **mỗi trang** thành ảnh
-(`_RENDER_DPI=150`) và gọi **vision model** OCR (`llm.vision_ocr`), rồi chunk văn
-bản thu được như bình thường. Chỉ chạy khi không có chunk nào (tránh gọi
-vision-LLM mỗi trang cho PDF đã có text).
+[ocr_fallback.py](../app/core/ingestion/ocr_fallback.py). Kích hoạt khi
+PdfChunker trả **0 chunk cho toàn tài liệu** (PDF chỉ là ảnh scan, không có lớp
+text). Chỉ chạy khi không có chunk nào — gọi vision model mỗi trang cho PDF đã
+có text là vô ích và tốn tiền.
+
+**Mỗi trang được render 200 DPI rồi gọi hai lượt:**
+
+| lượt | thiết lập | vai trò |
+|---|---|---|
+| cấu trúc | `openrouter_vision_table_model` | xin **HTML `<table>`** |
+| đối chiếu | `openrouter_vision_model` | text thuần, **chỉ để soi số** |
+
+Đầu ra lượt cấu trúc đi qua **đúng lớp xử lý bảng** như PDF có text: thành
+TABLE chunk (§2.5), rồi `_detect_header` / `_parse_data_rows` (§5.4) → vào
+`material_prices`. Trước đây OCR chỉ ra text thuần, nên một phụ lục giá dạng
+scan chỉ tìm kiếm được chứ **không đóng góp dòng giá nào**.
+
+**Hai model phải khác nhà cung cấp.** Model được yêu cầu xuất bảng có thể bịa
+một ô cho hàng "cân đối", và hỏi lại chính nó thì nó lặp lại đúng cái bịa đó.
+Bất kỳ số tiền nào trong HTML mà **không xuất hiện** trong bản đọc độc lập sẽ
+bị **làm trống ô** (`_verify`) — ô rỗng báo "không có dữ liệu", còn số bịa thì
+thành một dự toán sai.
+
+**Đo trên bản scan Vicem Hà Tiên** (bảng 19 cột, header 2 tầng, ô đơn vị gộp
+suốt cột), chấm từng dòng so với trang in:
+
+| model (lượt cấu trúc) | giá đúng | ghi chú | USD/trang |
+|---|---:|---|---:|
+| gemini-2.5-flash | **15/15** | — | 0,0068 |
+| claude-opus-4.5 | 15/15 | không hơn được gì đo được | 0,0710 |
+| gpt-4o | 14/15 | đọc `1.356.481` thành `1.436.481` — **giá sai** | 0,0293 |
+
+Độ bắt số của lượt đối chiếu trên cùng trang: haiku-4.5 **16/16**, flash 16/16,
+gpt-4o-mini 15/16. Model soi mà bỏ sót số thật sẽ **làm trống nhầm một giá
+đúng**, nên 16/16 là ngưỡng. Cấu hình đang dùng: **flash** (cấu trúc) +
+**haiku-4.5** (đối chiếu) ≈ **0,0145 USD/trang**.
+
+**Ba việc lớp này phải tự làm vì OCR không có hình học:**
+
+- `_normalise` — đệm hàng thiếu ô về bề rộng phổ biến, đệm **bên phải** để các
+  cột đầu (STT, tên, đơn vị) không lệch.
+- `_is_legend_row` nhận cả `[1] [2] [3]` — dạng có ngoặc. Không nhận thì dòng
+  chỉ số cột thành một vật liệu tên `"[3]"` giá `12`, và tệ hơn là gieo đơn vị
+  `"[4]"` cho mọi dòng sau nó.
+- `_fill_table_wide_unit` — ô "Tấn" gộp suốt cột được model đặt **một lần ở
+  giữa bảng**, 8 hàng trên nó không có gì để kế thừa. Chỉ áp cho **cột đơn
+  vị**: cột "Ghi chú" / "Điều kiện thương mại" cũng có dạng "một giá trị,
+  nhiều ô trống", nhưng ở đó ghi chú in cạnh một hàng chỉ thuộc hàng đó —
+  điền vào là bịa dữ liệu, đúng thứ §2.6 tránh được nhờ hình học.
+
+**Prompt phải nói rõ hai điều** mà model hay bỏ: ô gộp **theo cột** cũng phải
+lặp giá trị, và header **nhiều tầng** phải giữ nguyên từng dòng. Thiếu vế sau,
+model ép "Giá bán (chưa gồm VAT)" và 4 nhãn vùng con thành một dòng → mất hết
+từ khoá giá → `_detect_header` trả `None` → 0 dòng giá.
+
+**Kết quả trên tài liệu đó**: 0 chunk / 0 dòng giá → **13 chunk (6 bảng) / 38
+dòng giá**, 0 ô bị làm trống.
+
+**Giới hạn còn lại**: bảng có 4 cột giá song song (Hồ Chí Minh / Cần Giờ / Củ
+Chi / Phú Hòa Đông) nhưng `_detect_header` chỉ map **một** `price_generic_col`
+→ chỉ lấy cột đầu; dòng nào chỉ có giá ở vùng con khác sẽ bị bỏ.
 
 ---
 

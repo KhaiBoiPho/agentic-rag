@@ -65,7 +65,28 @@ class Settings(BaseSettings):
     openrouter_classifier_model: str = "openai/gpt-4o-mini"
     # Vision-capable model for OCR fallback on scanned/image-only PDF pages
     # (normal text/table extraction yields nothing for these).
-    openrouter_vision_model: str = "google/gemini-2.0-flash-exp:free"
+    # Two vision passes per scanned page (see ocr_fallback):
+    #
+    #   *_vision_table_model — asks for HTML table markup.
+    #   *_vision_model       — plain-text pass, used ONLY to corroborate the
+    #                          numbers in the structured output.
+    #
+    # They must stay DIFFERENT vendors: a model can invent a cell to make a
+    # row come out even, and a second opinion from the same model repeats the
+    # same invention.
+    #
+    # Measured on the Vicem Hà Tiên scan (19-column, multi-level header,
+    # column-wide merged unit), scoring extracted rows against the printed
+    # page: gemini-2.5-flash 15/15 prices correct, claude-opus-4.5 15/15,
+    # gpt-4o 14/15 (misread 1.356.481 as 1.436.481 — a wrong price, the worst
+    # failure mode). Flash matches Opus here at 1/10 the cost, so Opus buys
+    # nothing measurable on this corpus.
+    #
+    # Cross-check recall on the same page: haiku-4.5 16/16 numbers, flash
+    # 16/16, gpt-4o-mini 15/16 — a checker that misses a real number blanks a
+    # valid price, so 16/16 is the bar.
+    openrouter_vision_model: str = "anthropic/claude-haiku-4.5"
+    openrouter_vision_table_model: str = "google/gemini-2.5-flash"
 
     # ─── OpenAI (TTS only — direct, not via OpenRouter) ───────────────────────
     # OpenRouter has no genuine /audio/speech endpoint (see

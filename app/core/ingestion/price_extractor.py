@@ -15,6 +15,7 @@ uncertain rows is the safer failure mode than a best-effort guess.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from app.core.chunking.table_extract import is_unit_ditto
@@ -165,12 +166,19 @@ class _ColumnMapping:
     manufacturer_col: int | None = None
 
 
+_LEGEND_CELL_RE = re.compile(r"^[\[\(]?\d{1,2}[\]\)]?$")
+
+
 def _is_legend_row(row: list[str | None]) -> bool:
-    """A decorative '1','2','3'...  column-index row, sometimes repeated at
-    the top of every page for a table that spans many pages."""
+    """A decorative '1','2','3'... column-index row, sometimes repeated at the
+    top of every page for a table that spans many pages.
+
+    The brackets matter: the Vicem Hà Tiên price sheet prints this row as
+    "[1] [2] [3] …", which the bare-digit test missed, so it was parsed as a
+    data row and produced a material literally named "[3]" priced at 12."""
     cells = [(c or "").strip() for c in row]
     non_empty = [c for c in cells if c]
-    return bool(non_empty) and all(c.isdigit() for c in non_empty)
+    return bool(non_empty) and all(_LEGEND_CELL_RE.match(c) for c in non_empty)
 
 
 def _detect_header(table: list[list[str | None]]) -> tuple[int, _ColumnMapping] | None:
@@ -226,9 +234,13 @@ def _detect_header(table: list[list[str | None]]) -> tuple[int, _ColumnMapping] 
     if price_site_col is None and price_source_col is None and price_generic_col is None:
         return None
 
-    # Skip a trailing decorative "column index" row (e.g. '1','2','3'...)
-    # sometimes rendered right after the real header labels.
-    if header_idx + 1 < len(table) and _is_legend_row(table[header_idx + 1]):
+    # Skip the decorative "column index" row(s) (e.g. '1','2','3'... or
+    # '[1]','[2]'...) that follow the real header labels. Scanning forward
+    # rather than checking only the next row matters for multi-level headers:
+    # in the Vicem Hà Tiên sheet the index row sits two rows below the header
+    # labels, behind the sub-label row, and was being parsed as a product
+    # called "[3]" priced at 12.
+    while header_idx + 1 < len(table) and _is_legend_row(table[header_idx + 1]):
         header_idx += 1
 
     mapping = _ColumnMapping(
@@ -297,11 +309,47 @@ class _ParseState:
     heading_unclaimed: bool = False
 
 
+def _fill_table_wide_unit(data_rows: list[list[str]], unit_col: int) -> list[list[str]]:
+    """Fill the UNIT column when the whole table shares one unit.
+
+    Only for grids with no geometry to consult (OCR). "Đơn vị: Tấn" is often a
+    single cell merged down every row of the sheet; pdfplumber reports that
+    merge and §2.6 fills it, but a vision transcription places the word once —
+    typically near the vertical middle — leaving every row above it blank, out
+    of reach of forward-filling.
+
+    Restricted to the unit column on purpose. The same "one value, many
+    blanks" shape appears in "Ghi chú" and "Điều kiện thương mại", where a
+    note printed against one row applies to that row alone — filling those
+    would invent data, the exact failure §2.6 avoids by using geometry. The
+    unit is different: a priced row without a unit is meaningless, so a blank
+    there can only be the merge. The column must still hold exactly ONE
+    distinct value, so nothing can be filled with the wrong one."""
+    if not data_rows or unit_col < 0:
+        return data_rows
+    ncol = max(len(r) for r in data_rows)
+    out = [list(r) + [""] * (ncol - len(r)) for r in data_rows]
+    if unit_col >= ncol:
+        return out
+    # Column-index rows are still in `data_rows` at this point (they are
+    # skipped per-row later), and their "[4]" would count as a second distinct
+    # unit, blocking the fill entirely.
+    values = {r[unit_col].strip() for r in out if r[unit_col].strip() and not _is_legend_row(r)}
+    if len(values) != 1:
+        return out
+    only = values.pop()
+    for r in out:
+        if not r[unit_col].strip():
+            r[unit_col] = only
+    return out
+
+
 def _parse_data_rows(
     data_rows: list[list[str | None]],
     mapping: _ColumnMapping,
     state: _ParseState,
     raw_rows: list[list[str]] | None = None,
+    assume_column_merges: bool = False,
 ) -> tuple[list[MaterialPriceRow], list[str]]:
     """`raw_rows`, when given, is the same block of rows *before* merged-cell
     fill — used only to recognise group-heading rows by their emptiness."""
@@ -315,12 +363,24 @@ def _parse_data_rows(
     )
     spec_col, manufacturer_col = mapping.spec_col, mapping.manufacturer_col
 
+    if assume_column_merges:
+        data_rows = _fill_table_wide_unit([[c or "" for c in r] for r in data_rows], unit_col)
+
     for row_idx, row in enumerate(data_rows):
         cells = [c or "" for c in row]
         if len(cells) <= max(name_col, unit_col):
             continue
 
         raw_cells = raw_rows[row_idx] if raw_rows is not None and row_idx < len(raw_rows) else cells
+
+        # A column-index row ('1','2','3'… or '[1]','[2]'…) is never data,
+        # wherever it appears — these repeat at the top of every page of a
+        # multi-page annex, and behind a multi-level header they sit below the
+        # sub-label row where the header-skip logic cannot reach. Left in, one
+        # became a product named "[3]" priced at 12, and worse, seeded the
+        # running unit with "[4]" for every row after it.
+        if _is_legend_row(cells):
+            continue
 
         name = cells[name_col].strip()
         unit = cells[unit_col].strip()
@@ -330,7 +390,14 @@ def _parse_data_rows(
         # in this one column it can only mean "same as above"; storing it
         # verbatim produced prices rendered as "4.250.000 đ/-" and made the
         # unit filter in MaterialPriceRepository.lookup() unusable.
-        if is_unit_ditto(unit) and state.unit:
+        if (is_unit_ditto(unit) or not unit) and state.unit:
+            # An empty unit cell is the same merged-cell situation as "-": the
+            # value was printed once at the top of the span. pdfplumber's
+            # geometry fills those (§2.6), but an OCR transcription has no
+            # geometry — whether the model repeats the value is a coin flip,
+            # and every unfilled row was being dropped by the `not unit`
+            # guard below. `state.unit` only ever holds a real unit seen
+            # earlier in the same table, so this cannot invent one.
             unit = state.unit
         elif unit and not is_unit_ditto(unit):
             state.unit = unit
@@ -458,7 +525,12 @@ def parse_price_table(table: list[list[str | None]]) -> TableParseResult:
 
 
 def extract_price_rows(
-    content: bytes, region: str, source_type: str, filename: str = ""
+    content: bytes,
+    region: str,
+    source_type: str,
+    filename: str = "",
+    tables: Iterable[tuple[str, list[list[str]], list[list[str]]]] | None = None,
+    assume_column_merges: bool = False,
 ) -> TableParseResult:
     """Entry point: walk every table in the document and map it to price rows.
 
@@ -485,9 +557,14 @@ def extract_price_rows(
     last_col_count: int | None = None
     state = _ParseState()
 
-    tables = iter_price_tables(content, filename or "x.pdf")
+    # `tables` lets a caller supply an already-extracted grid — the OCR
+    # fallback passes the tables its vision pass produced, so a scanned price
+    # annex feeds material_prices too instead of only becoming searchable text.
+    source_tables = (
+        tables if tables is not None else iter_price_tables(content, filename or "x.pdf")
+    )
 
-    for label, table, raw_table in tables:
+    for label, table, raw_table in source_tables:
         if not table:
             continue
         col_count = max((len(r) for r in table[:3]), default=0)
@@ -515,7 +592,9 @@ def extract_price_rows(
             )
             continue
 
-        rows, warnings = _parse_data_rows(data_rows, last_mapping, state, raw_data_rows)
+        rows, warnings = _parse_data_rows(
+            data_rows, last_mapping, state, raw_data_rows, assume_column_merges
+        )
         for r in rows:
             r.region = region
             r.source_type = source_type
