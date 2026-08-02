@@ -21,6 +21,28 @@ _enc = tiktoken.get_encoding("cl100k_base")
 # see split_oversized_table_chunk() below.
 MAX_EMBED_TOKENS = 8000
 
+# The RETRIEVAL cap, which is a different question from the one above. 8.000
+# is the largest chunk the embeddings API accepts; 3.000 is the largest chunk
+# that is still USEFUL to retrieve. A price appendix table runs to thousands
+# of rows, and a top-k window that spends one of its 5 slots on such a table
+# is carrying mostly rows nobody asked about.
+#
+# Measured on the project corpus (scripts/eval_chunk_cap.py), asking how many
+# of the 242 known CADIVI prices land inside a top-5 window:
+#
+#     cap      chunks    coverage@5    header overhead
+#     none      1.333      51/242            0%
+#     3000      1.652      78/242           +3%     <- chosen
+#     1500      2.411      41/242          +11%
+#      800      4.769      18/242          +22%
+#
+# Coverage peaks at 3.000 and then FALLS: below it, each piece carries too
+# few rows for k of them to add up, the repeated header eats a fifth of the
+# budget, and same-table pieces embed so alike that ranking cannot separate
+# them (cosine >=0.98 for 24,8% of same-table pairs at 800 vs 13,2% at
+# 3.000 — scripts/eval_intra_table_sim.py). See docs/bao-cao-benchmark.md.
+MAX_TABLE_CHUNK_TOKENS = 3000
+
 _TABLE_ROW_RE = re.compile(r"<tr>.*?</tr>", re.DOTALL)
 
 
@@ -93,6 +115,45 @@ def split_oversized_table_chunk(chunk: Chunk, max_tokens: int = MAX_EMBED_TOKENS
         html = "<table>\n" + "\n".join(rows_group) + "\n</table>"
         result.append(replace(chunk, content=html, token_count=count_tokens(html)))
     return result
+
+
+def enforce_chunk_caps(chunks: list[Chunk], doc_id: str, logger) -> list[Chunk]:
+    """Apply the retrieval cap to table chunks, then the hard embedding cap.
+
+    Two passes, because they fail differently. The first is about retrieval
+    quality and only tables can satisfy it (splitting needs a header row to
+    repeat). The second is about the API rejecting the batch: anything still
+    over MAX_EMBED_TOKENS after splitting is not a table we can cut — a TEXT
+    chunk, or a table whose single row is enormous — and has to be dropped,
+    because one oversized item fails the whole embeddings request.
+    """
+    over_cap = [c for c in chunks if embed_token_count(c) > MAX_TABLE_CHUNK_TOKENS]
+    if not over_cap:
+        return chunks
+
+    expanded: list[Chunk] = []
+    for c in chunks:
+        expanded.extend(split_oversized_table_chunk(c, MAX_TABLE_CHUNK_TOKENS))
+
+    dropped = [c for c in expanded if embed_token_count(c) > MAX_EMBED_TOKENS]
+    if dropped:
+        logger.warning(
+            "doc_id=%s: dropping %d chunk(s) still over %d tokens after table-splitting "
+            "(non-table content, or a single oversized cell)",
+            doc_id,
+            len(dropped),
+            MAX_EMBED_TOKENS,
+        )
+        expanded = [c for c in expanded if embed_token_count(c) <= MAX_EMBED_TOKENS]
+
+    logger.info(
+        "doc_id=%s: split %d chunk(s) over the %d-token retrieval cap -> %d chunks total",
+        doc_id,
+        len(over_cap),
+        MAX_TABLE_CHUNK_TOKENS,
+        len(expanded),
+    )
+    return expanded
 
 
 def count_tokens(text: str) -> int:

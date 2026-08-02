@@ -17,9 +17,7 @@ import logging
 from collections.abc import AsyncGenerator
 
 from app.core.chunking.base import (
-    MAX_EMBED_TOKENS,
-    embed_token_count,
-    split_oversized_table_chunk,
+    enforce_chunk_caps,
 )
 from app.core.chunking.dispatcher import ChunkDispatcher
 from app.core.ingestion.price_extractor import classify_source_file, extract_price_rows
@@ -115,29 +113,7 @@ class PriceExtractionPipeline:
                 {"region": region, "source_type": source_type, "price_period": price_period}
             )
 
-        oversized_count = sum(1 for c in chunks if embed_token_count(c) > MAX_EMBED_TOKENS)
-        if oversized_count:
-            expanded: list = []
-            for c in chunks:
-                expanded.extend(split_oversized_table_chunk(c))
-            still_oversized = sum(1 for c in expanded if embed_token_count(c) > MAX_EMBED_TOKENS)
-            if still_oversized:
-                logger.warning(
-                    "doc_id=%s: %d chunk(s) still exceed %d tokens after table-splitting — "
-                    "dropping them from Qdrant "
-                    "(structured price rows are unaffected, separate extraction path)",
-                    doc_id,
-                    still_oversized,
-                    MAX_EMBED_TOKENS,
-                )
-                expanded = [c for c in expanded if embed_token_count(c) <= MAX_EMBED_TOKENS]
-            logger.info(
-                "doc_id=%s: split %d oversized price-table chunk(s) into %d smaller chunks",
-                doc_id,
-                oversized_count,
-                len(expanded) - (len(chunks) - oversized_count),
-            )
-            chunks = expanded
+        chunks = enforce_chunk_caps(chunks, doc_id, logger)
 
         yield {"stage": "chunking", "progress": 0.25, "chunks_total": len(chunks), "done": False}
 

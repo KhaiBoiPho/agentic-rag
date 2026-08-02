@@ -45,6 +45,13 @@ CASES: list[tuple[str, str, str]] = [
     ("HN", "thép thanh vằn D10", "D10"),
     ("HN", "nhựa đường 60/70", "nhựa đường"),
     ("DN", "ống nhựa uPVC", "uPVC"),
+    # Đơn vị đo model tự thêm vào. "mm2" có chữ số nên từng bị ghim vĩnh viễn
+    # bởi luật "không bao giờ bỏ token có số" (vốn để giữ "d12"), mà nó lại
+    # khớp 0 dòng — nên mọi ứng viên đều bị loại và một sản phẩm CÓ THẬT bị
+    # báo là không tìm thấy.
+    ("DN", "cáp vặn xoắn LV-ABC-4x95 mm2", "LV-ABC-4x95"),
+    ("DN", "cáp điện CXV-150 mm2", "CXV-150"),
+    ("HN", "thép thanh vằn D10 kg", "D10"),
 ]
 
 

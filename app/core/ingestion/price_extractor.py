@@ -122,14 +122,26 @@ _NUMBER_RE = re.compile(r"[\d.,]+")
 def _parse_price(cell: str | None) -> float | None:
     """Vietnamese number format: '.' thousands separator, ',' decimal.
 
-    pdfplumber occasionally splits a single number with a stray space right
-    after the leading digit(s) (e.g. "1 8.000" for "18.000") due to
-    font-kerning artifacts in the source PDF. Only collapse that specific
-    leading-digit gap, not every space, so a genuine two-number cell (e.g.
-    a "min max" range separated by whitespace) isn't merged into one."""
+    pdfplumber occasionally splits a single number with a stray space, from
+    font-kerning artifacts in the source PDF. Two shapes occur, and both have
+    to be repaired or the number is read truncated:
+
+        "1 8.000"    -> "18.000"     gap after the leading digit(s)
+        "7 .300"     -> "7.300"      gap BEFORE a thousands separator
+        "1.356 .481" -> "1.356.481"  same, mid-number
+
+    The second shape is the damaging one: `[\d.,]+` stops at the space and
+    yields 7 instead of 7.300, so a 7.300 đ/m cable was stored as 7 đ/m —
+    422 rows in the corpus had a price under 1.000 đ from this.
+
+    Neither rule collapses every space: a genuine two-number cell (a "min
+    max" range) has a digit, not a separator, after the gap, so it is left
+    alone and the first number still wins."""
     if not cell:
         return None
-    cell = re.sub(r"^(\d{1,2})\s+(?=\d)", r"\1", cell.strip())
+    cell = cell.strip()
+    cell = re.sub(r"(?<=\d)\s+(?=[.,]\d{3}(?!\d))", "", cell)
+    cell = re.sub(r"^(\d{1,2})\s+(?=\d)", r"\1", cell)
     match = _NUMBER_RE.search(cell)
     if not match:
         return None

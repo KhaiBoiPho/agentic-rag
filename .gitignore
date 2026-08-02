@@ -42,3 +42,6 @@ Thumbs.db
 # Large binary DB/vector dumps used to skip re-seeding+re-embedding
 # seed_data/ on a new machine/engine — never commit, restore locally instead.
 backups/*.tar.gz
+
+# Vector embedding cache cho benchmark (tái dùng giữa các lần chạy, rất nặng)
+.bench_cache/

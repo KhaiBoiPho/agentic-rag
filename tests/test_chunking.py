@@ -69,11 +69,37 @@ def test_naive_merge_origins_point_at_contributing_section():
 
 
 class _FakeRow:
-    """Stands in for pdfplumber's Row: `cells[i] is None` where a taller cell
-    from an earlier row covers this grid position."""
+    """Stands in for pdfplumber's Row.
 
-    def __init__(self, cells):
-        self.cells = cells
+    `cells[i] is None` where a taller cell from an earlier row covers this
+    grid position. Present cells carry a real (x0, top, x1, bottom) bbox,
+    because _resolve now uses the geometry to tell a merged-cell body apart
+    from a hole in the ruling lines.
+    """
+
+    COL_W = 100.0
+    ROW_H = 10.0
+
+    def __init__(self, cells, row_idx=0):
+        top = row_idx * self.ROW_H
+        self.bbox = (0.0, top, len(cells) * self.COL_W, top + self.ROW_H)
+        self.cells = [
+            None
+            if c is None
+            else (i * self.COL_W, top, (i + 1) * self.COL_W, top + self.ROW_H)
+            for i, c in enumerate(cells)
+        ]
+
+
+def _rows(*layouts):
+    return [_FakeRow(cells, i) for i, cells in enumerate(layouts)]
+
+
+def _word(text, col, row_idx):
+    """A page word centred inside (col, row_idx) of the _FakeRow grid."""
+    x0 = col * _FakeRow.COL_W + 10
+    top = row_idx * _FakeRow.ROW_H + 2
+    return {"text": text, "x0": x0, "x1": x0 + 30, "top": top, "bottom": top + 6}
 
 
 def test_is_ditto_markers():
@@ -98,12 +124,8 @@ def test_resolve_fills_vertically_merged_cell():
         ["2", "DHP-STR02A 40W", "-", "", "5.087.250"],
         ["3", "DHP-STR02A 50W", "-", "", "5.785.500"],
     ]
-    rows = [
-        _FakeRow([1, 1, 1, 1, 1]),
-        _FakeRow([1, 1, 1, None, 1]),
-        _FakeRow([1, 1, 1, None, 1]),
-    ]
-    out = _resolve(grid, rows)
+    rows = _rows([1, 1, 1, 1, 1], [1, 1, 1, None, 1], [1, 1, 1, None, 1])
+    out = _resolve(grid, rows, [])
     assert [r[3] for r in out] == ["CE, ENEC, RoHS"] * 3
     # A bare "-" is left alone here; only the price extractor's unit column
     # resolves it, where "-" cannot be a real value.
@@ -112,14 +134,33 @@ def test_resolve_fills_vertically_merged_cell():
 
 def test_resolve_keeps_genuinely_blank_ruled_cell_blank():
     grid = [["a", "note"], ["b", ""]]
-    rows = [_FakeRow([1, 1]), _FakeRow([1, 1])]  # both cells really exist
-    assert _resolve(grid, rows)[1][1] == ""
+    rows = _rows([1, 1], [1, 1])  # both cells really exist
+    assert _resolve(grid, rows, [])[1][1] == ""
 
 
 def test_resolve_expands_ditto_marker():
     grid = [["Đèn A", "Công ty TNHH CDE VINA"], ["Đèn B", "-nt-"]]
-    rows = [_FakeRow([1, 1]), _FakeRow([1, 1])]
-    assert _resolve(grid, rows)[1][1] == "Công ty TNHH CDE VINA"
+    rows = _rows([1, 1], [1, 1])
+    assert _resolve(grid, rows, [])[1][1] == "Công ty TNHH CDE VINA"
+
+
+def test_resolve_recovers_text_from_a_hole_instead_of_inheriting():
+    """Incomplete ruling lines look identical to a merged cell in the grid,
+    but the page still has words sitting in the hole. Inheriting there
+    fabricated a price: "Cấp phối A Dmax25 … 298.182" was stored as 7 đ/m3,
+    a stale digit from an earlier row (121 rows in the corpus)."""
+    grid = [["Đá 1x2", "436.364"], ["Cấp phối A Dmax25", ""]]
+    rows = _rows([1, 1], [1, None])
+    words = [_word("298.182", col=1, row_idx=1)]
+    assert _resolve(grid, rows, words)[1][1] == "298.182"
+
+
+def test_resolve_still_inherits_when_the_hole_is_empty():
+    """The genuine merged cell: nothing is drawn in the covered region, so
+    forward-filling remains the right answer."""
+    grid = [["Đèn A", "CE, RoHS"], ["Đèn B", ""]]
+    rows = _rows([1, 1], [1, None])
+    assert _resolve(grid, rows, [])[1][1] == "CE, RoHS"
 
 
 # ─── Embedding budget ──────────────────────────────────────────────────────

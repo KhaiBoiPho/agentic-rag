@@ -52,6 +52,39 @@ _STOPWORDS = {
 }
 _MIN_WORD_LEN = 2
 
+# Units of measure. These carry a digit, so the "never drop a token with a
+# digit" rule below would pin them forever — but a unit is not a product's
+# identity, and models append them freely out of their own knowledge. Asked
+# for "cáp vặn xoắn LV-ABC-4x95", gpt-4o-mini looked up "LV-ABC-4x95 mm2";
+# the row is stored as "LV-ABC-4x95 - 0,6/1kV" with no "mm2" anywhere, so
+# every candidate was filtered out and a product that exists was reported as
+# missing. Listing them explicitly keeps real codes ("D12", "4x95", "PCB40")
+# pinned while letting a stray unit be relaxed away.
+_UNIT_TOKENS = {
+    "mm",
+    "mm2",
+    "mm3",
+    "cm",
+    "cm2",
+    "cm3",
+    "dm",
+    "m2",
+    "m3",
+    "kg",
+    "kn",
+    "kw",
+    "kva",
+    "kv",
+    "kwh",
+    "mpa",
+    "kpa",
+    "lit",
+    "ml",
+    "inch",
+    "ton",
+    "tan",
+}
+
 
 def _has_word(col, word: str):
     """`word` must appear as a WHOLE word in `col`, not as a substring.
@@ -314,10 +347,32 @@ class MaterialPriceRepository:
             # "nhat" occurs in 15, so a purely frequency-ordered drop threw
             # away "d12" first and answered "thép Việt Nhật D12" with a glass
             # partition whose brand happens to be "kính Việt Nhật".
-            pinned = [w for w in words if any(c.isdigit() for c in w)]
+            # …but a unit of measure carries a digit without being an identity
+            # (see _UNIT_TOKENS), so it stays droppable rather than pinned.
+            pinned = [w for w in words if any(c.isdigit() for c in w) and w not in _UNIT_TOKENS]
             droppable = [w for w in words if w not in pinned]
             freq = await self._word_frequencies(s, region, droppable) if droppable else {}
-            ordered = sorted(droppable, key=lambda w: (-freq.get(w, 0), -len(w)))
+
+            # Units are dropped FIRST, then everything else most-common-first.
+            #
+            # Frequency alone cannot order these, and getting it wrong is
+            # dangerous in BOTH directions. Two words, both matching zero rows:
+            #
+            #  · "mm2" — descending frequency puts a 0-count word LAST, so
+            #    every relaxation still required it and "LV-ABC-4x95 mm2"
+            #    reported a cable that exists as not found.
+            #  · "hoang"/"thach" — but dropping absent words first leaves only
+            #    "xi mang", which matches any cement at all: "xi măng Hoàng
+            #    Thạch" (absent from this table) came back as "Xi măng Hà Tiên
+            #    Xanh". A confident wrong brand is worse than no answer.
+            #
+            # What separates them is not how often they occur but WHAT they
+            # are: one is a unit the model appended, the other IS the product's
+            # identity. Absence of an identity word is itself the answer — the
+            # product is not here — so only units get priority to be dropped.
+            ordered = sorted(
+                droppable, key=lambda w: (w not in _UNIT_TOKENS, -freq.get(w, 0), -len(w))
+            )
 
             # Never relax below two required words. One word is not a product
             # identity: "xi măng Hoàng Thạch" (a cement absent from this

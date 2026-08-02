@@ -21,6 +21,8 @@ luận chưa đo, tài liệu nói rõ như vậy.
 | **"tool" là gì**, hệ thống có những tool nào | **§6B** |
 | công thức dự toán theo từng loại hình công trình | §8B |
 | những gì đã thử và **bị loại bằng số liệu** | §0B.7, §5B.8 |
+| **vì sao trần chunk là 3.000** token, và hệ thống đo được bao nhiêu điểm | **[bao-cao-benchmark.md](bao-cao-benchmark.md)** |
+| 30 câu hỏi dùng để chấm điểm hệ thống, và vì sao chọn từng câu | **[bo-cau-hoi-benchmark.md](bo-cau-hoi-benchmark.md)** |
 
 > Quy ước đọc: `app/...py:NN` = file:dòng. Các hằng số cấu hình mặc định nằm ở
 > [app/config.py](../app/config.py), giá trị chạy thật lấy từ `.env`.
@@ -28,7 +30,9 @@ luận chưa đo, tài liệu nói rõ như vậy.
 > **Tài liệu liên quan:** [kien-truc-he-thong.md](kien-truc-he-thong.md) (tổng
 > quan kiến trúc), [construction-pricing-pipeline.md](construction-pricing-pipeline.md)
 > (đặc tả sâu luồng giá — bổ trợ §5 & §8), [getting-started.md](getting-started.md)
-> (chạy thử), [railway-deploy.md](railway-deploy.md) (triển khai).
+> (chạy thử), [railway-deploy.md](railway-deploy.md) (triển khai),
+> [bao-cao-benchmark.md](bao-cao-benchmark.md) +
+> [bo-cau-hoi-benchmark.md](bo-cau-hoi-benchmark.md) (đo lường & đánh giá).
 
 ---
 
@@ -205,6 +209,14 @@ Ghi lại để người sau khỏi thử lại. Kết quả âm cũng là kết
 | `word_similarity` (pg_trgm) để nới lỏng khớp tên | chịu được thứ tự từ | xếp **sai thương hiệu** lên hạng 1 (Hạ Long 0,742 > Hà Tiên 0,741) | **loại** (§5B.6) |
 | `top_k` 5 → 10 | thêm cơ hội trúng chunk đúng | cứu thêm **1/16** câu, không chạm câu tra giá (hạng 11); gấp đôi context | **loại** |
 | text2sql cho câu hỏi giá | linh hoạt hơn | không chạm chỗ nghẽn thật (khớp tên) | **loại** (§6B.4) |
+| Trần chunk bảng **800** token | mảnh nhỏ ⇒ truy hồi trúng hơn | độ phủ **18/242**, tệ hơn cả không cắt (51); header ăn **22%** token; 24,8% cặp mảnh cùng bảng có cosine ≥0,98 | **loại**, chọn **3.000** ([báo cáo](bao-cao-benchmark.md#2-vì-sao-3000-token)) |
+
+**Đã sửa nhờ đo, không phải loại bỏ:**
+
+| lỗi | biểu hiện | cách phân biệt | kết quả |
+|---|---|---|---|
+| Số bị khoảng trắng cắt cụt (`"7 .300"`) | cáp 7.300 đ/m lưu thành **7 đ/m** | khoảng trắng đứng trước dấu phân cách nghìn thì là lỗi kerning, không phải hai số | 431 → 44 dòng giá < 1.000 đ |
+| **Lưới bảng khuyết** bị coi là ô gộp | `Dmax25 … 298.182` lưu thành **7 đ/m3** | thân ô gộp thật thì vùng đó **trống**; lưới khuyết thì **vẫn có chữ** (§2.6) | 121 dòng giá bịa bị loại bỏ; tổng dòng giá 11.508 → **18.551** |
 
 ### 0B.8. Hai nguyên tắc xuyên suốt
 
@@ -490,6 +502,64 @@ vẫn đúng, nhưng **cột4 cũng bị điền `'Hàng đặt'` cho cả 4 hà
 chú cho 3 sản phẩm không hề có. Với bảng giá vật liệu, các cột "Ghi chú",
 "Điều kiện thương mại", "Vận chuyển" đều là loại thông tin chỉ áp cho **một**
 dòng cụ thể, nên sai kiểu này là bịa dữ liệu không có trong tài liệu.
+
+#### Trường hợp thứ ba — LƯỚI KHUYẾT, và vì sao nó nguy hiểm nhất
+
+Bảng trên có hai loại `''`. Thực tế có **loại thứ ba**, và nó trông giống hệt
+ô gộp trong `rows[r].cells` — cũng là `None`.
+
+Một số PDF vẽ bảng với **đường kẻ không đầy đủ**: có ô thật, có chữ trong ô,
+nhưng thiếu nét viền nên pdfplumber không dựng được ô ở vị trí đó. Khi ấy:
+
+1. pdfplumber **đánh rơi luôn chữ** trong vùng đó — không có ô nào để gắn vào,
+   nên `grid[r][c]` ra `''`;
+2. `rows[r].cells[c]` ra **`None`**, y hệt thân ô gộp;
+3. quy tắc ở bảng trên bèn điền `last[c]` — **một giá trị từ hàng khác**.
+
+Kết quả không phải "mất dữ liệu" mà là **bịa dữ liệu**, tệ hơn nhiều. Ca thật
+trong phụ lục vật liệu Đà Nẵng:
+
+```
+trang PDF:   Cấp phối A Dmax25 | đ/m3 | (Giá từ ngày 18/4/2026) | 298.182
+                                                                  ▲
+                          chữ nằm ở x≈666, nhưng lưới bảng không có ô nào
+                          phủ khoảng x 643→698 ⇒ pdfplumber bỏ qua chữ này
+
+đọc ra:      Cấp phối A Dmax25 | đ/m3 | (Giá từ ngày 18/4/2026) | 7
+                                                                  ▲
+                          '7' kế thừa từ một hàng phía trên — một con số
+                          hoàn toàn không liên quan, nhưng trông vẫn "hợp lệ"
+```
+
+**121 dòng** trong kho dữ liệu từng mang giá bịa kiểu này (`7 đ/m3`, `5 đ/m3`…).
+Không có dấu hiệu nào để phát hiện: đúng kiểu dữ liệu, đúng đơn vị, chỉ sai giá.
+
+**Cách phân biệt.** Quay lại nhìn trang giấy chứ đừng chỉ nhìn lưới:
+
+| | thân ô gộp thật | lưới khuyết |
+|---|---|---|
+| `cells[c]` | `None` | `None` |
+| `grid[r][c]` | `''` | `''` |
+| **vùng đó trên trang có chữ không?** | **KHÔNG** — chữ nằm ở hàng ô bắt đầu | **CÓ** — chữ vẫn nằm đúng chỗ đó |
+
+Nên trước khi kế thừa, `_resolve()` gọi `_recover_hole()`: dựng lại hộp của ô
+từ **biên ngang của cột** (mượn từ những hàng có bbox ở cột đó) và **biên dọc
+của hàng**, rồi tìm mọi từ trên trang có **tâm** rơi vào hộp đó.
+
+- tìm thấy chữ → chữ đó là **của chính hàng này**, dùng nó, **không kế thừa**;
+- không thấy gì → đúng là thân ô gộp, kế thừa như cũ.
+
+Khớp theo **tâm của từ** chứ không theo độ chồng lấn, để một từ nằm vắt qua
+ranh giới cột chỉ thuộc về đúng một cột thay vì bị đếm hai lần.
+
+Hai test khoá đúng ranh giới này lại:
+`test_resolve_recovers_text_from_a_hole_instead_of_inheriting` và
+`test_resolve_still_inherits_when_the_hole_is_empty`.
+
+> Đây là ví dụ điển hình cho nguyên tắc ở §0B.8: một suy luận hình học **đúng
+> trong đa số trường hợp** (`None` ⇒ ô gộp) vẫn có thể bịa dữ liệu ở thiểu số
+> còn lại. Chi phí để loại bỏ thiểu số đó là một lượt `extract_words()` mỗi
+> trang.
 
 #### Ký hiệu lặp (ditto)
 
