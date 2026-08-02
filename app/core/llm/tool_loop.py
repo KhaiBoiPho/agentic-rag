@@ -32,13 +32,28 @@ _AGENT_TOOLS: dict[str, tuple[Tool, callable]] = {
 }
 
 
+def _tool_input_schema(tool: Tool) -> dict:
+    """Read the tool's JSON schema across mcp versions.
+
+    `mcp` is pinned as >=1.1.0, and a later release renamed `Tool.inputSchema`
+    to `input_schema`. Construction still accepts the old spelling as an
+    alias, so the tools built fine and only this read failed — at import time,
+    inside the request handler, which took down agent mode on the deployed
+    build while local (older mcp) kept working."""
+    for attr in ("inputSchema", "input_schema"):
+        schema = getattr(tool, attr, None)
+        if schema:
+            return schema
+    raise AttributeError(f"Tool {tool.name!r} exposes no input schema")
+
+
 def _to_openai_tool_schema(tool: Tool) -> dict:
     return {
         "type": "function",
         "function": {
             "name": tool.name,
             "description": tool.description,
-            "parameters": tool.inputSchema,
+            "parameters": _tool_input_schema(tool),
         },
     }
 
