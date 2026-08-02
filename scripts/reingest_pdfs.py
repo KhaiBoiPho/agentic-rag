@@ -84,7 +84,7 @@ async def _delete_document(session, qdrant, doc) -> None:
     await session.delete(doc)
 
 
-async def main(apply: bool) -> int:
+async def main(apply: bool, skip_unknown: bool = False) -> int:
     from sqlalchemy import select
 
     from app.core.ingestion.pipeline import IngestionPipeline
@@ -125,9 +125,19 @@ async def main(apply: bool) -> int:
             f"{p['filename'][:50]:52} {p['region'] or '-':5} {p['chunks']:>9} "
             f"{'-' if p['rows'] is None else p['rows']:>8}  {p['problem'] or 'sẵn sàng'}"
         )
-    if any(p["problem"] for p in plan):
-        print("\nCó mục thiếu file nguồn — dừng lại.")
+    unknown = [p for p in plan if p["problem"]]
+    if unknown and not skip_unknown:
+        print(
+            "\nCó mục thiếu file nguồn — dừng lại. Những tài liệu này được tải lên "
+            "qua UI nên bản gốc không nằm trong repo; dùng --skip-unknown để nạp lại "
+            "phần còn lại và giữ nguyên chúng (chúng sẽ vẫn mang dữ liệu code cũ)."
+        )
         return 1
+    if unknown:
+        print(f"\nBỏ qua {len(unknown)} tài liệu thiếu file nguồn (giữ nguyên dữ liệu cũ):")
+        for p in unknown:
+            print(f"   - {p['filename']}")
+        plan = [p for p in plan if not p["problem"]]
     if not apply:
         print(f"\n--dry-run: {len(plan)} tài liệu sẽ được nạp lại. Chưa thay đổi gì.")
         return 0
@@ -194,5 +204,10 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument(
+        "--skip-unknown",
+        action="store_true",
+        help="Nạp lại những tài liệu có file nguồn, bỏ qua phần còn lại",
+    )
     a = ap.parse_args()
-    sys.exit(asyncio.run(main(apply=a.apply)))
+    sys.exit(asyncio.run(main(apply=a.apply, skip_unknown=a.skip_unknown)))
