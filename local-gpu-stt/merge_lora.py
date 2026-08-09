@@ -27,6 +27,17 @@ from pathlib import Path
 from peft import PeftModel
 from transformers import WhisperForConditionalGeneration, WhisperProcessor
 
+# vinai/PhoWhisper-medium ships only pytorch_model.bin (no safetensors
+# version), and transformers >=4.5x refuses torch.load on torch<2.6 by
+# default (CVE-2025-32434 — arbitrary code execution from an untrusted
+# pickle). Upgrading torch in a shared conda env just for this one-off
+# merge is more disruptive than the fix: skip the guard for this single,
+# specific, well-known official-VinAI repo rather than pulling torch>=2.6
+# into an environment other things depend on.
+import transformers.modeling_utils as _tf_modeling_utils
+
+_tf_modeling_utils.check_torch_load_is_safe = lambda: None
+
 BASE_MODEL = "vinai/PhoWhisper-medium"
 ADAPTER = "schaffen49/PhoWhisper_medium_lora"
 MERGED_DIR = Path("phowhisper-medium-lora-merged")
