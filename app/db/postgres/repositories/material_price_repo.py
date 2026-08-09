@@ -232,6 +232,22 @@ class MaterialPriceRepository:
             )
             if rows:
                 return rows
+        # Same reasoning as the material_category fallback above, for
+        # material_name this time. A model asking about one manufacturer's
+        # whole product line often names the CATEGORY, not a specific
+        # product ("đá xây dựng ở mỏ đá Thanh Tâm") — that word never
+        # occurs in material_name (it lives in material_category, already
+        # dropped and retried above), so the strict all-words-match zeroes
+        # out every row even though `manufacturer` alone narrows the search
+        # plenty. Only safe to drop when a manufacturer is given — the two
+        # together are effectively cataloguing that supplier's line, not a
+        # random name-less trawl.
+        if material_name and manufacturer:
+            rows = await self._lookup(
+                region, None, None, manufacturer, unit, exclude_name_keywords, limit
+            )
+            if rows:
+                return rows
         return await self._lookup_raw(region, material_name, manufacturer, limit)
 
     async def _lookup_raw(
