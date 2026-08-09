@@ -160,17 +160,15 @@ export default function Composer({
             onKeyDown={onKey}
           />
 
-          {mode === "chat" && (
-            <button
-              className={`ibtn${recording ? " rec" : ""}`}
-              onClick={recording ? stopRecording : startRecording}
-              disabled={transcribing || busy}
-              aria-label={recording ? t.chat.stopRecording : t.chat.speak}
-              type="button"
-            >
-              <Mic />
-            </button>
-          )}
+          <button
+            className={`ibtn${recording ? " rec" : ""}`}
+            onClick={recording ? stopRecording : startRecording}
+            disabled={transcribing || busy}
+            aria-label={recording ? t.chat.stopRecording : t.chat.speak}
+            type="button"
+          >
+            <Mic />
+          </button>
           <button className="ibtn send" onClick={submit} disabled={busy || !text.trim()} aria-label={t.chat.send} type="button">
             <Send />
           </button>
