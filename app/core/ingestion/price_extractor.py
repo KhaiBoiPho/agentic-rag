@@ -341,30 +341,57 @@ def _infer_mapping_from_data(rows: list[list[str | None]]) -> _ColumnMapping | N
     width = max(len(r) for r in rows)
     money = [0] * width
     unit = [0] * width
-    text = [0] * width
+    text_hits = [0] * width
+    # Separate from text_hits: a category label repeated near-identically on
+    # every row ("Thiết bị Phòng cháy chữa cháy") clears the >=8-char bar as
+    # reliably as the real, longer, per-row-varying product description next
+    # to it, so both columns tie on hit-COUNT — and the tie-break below needs
+    # actual length to find "cột có văn bản dài nhất" (the docstring's own
+    # words), or it silently keeps whichever column comes first.
+    text_len = [0] * width
     for r in rows:
         for i in range(min(len(r), width)):
             c = (r[i] or "").strip()
             if not c:
                 continue
-            if _parse_price(c) is not None and len(re.sub(r"\D", "", c)) >= 4:
+            # The length cap matters: _parse_price finds the FIRST number
+            # ANYWHERE in the cell, and the digit-count check counts digits
+            # across the WHOLE cell — so a long product description with a
+            # model code, a dimension ("490x410x100mm") and a boilerplate
+            # phrase ("2000m") buried in it satisfies both checks despite
+            # not being a price cell at all. A real price cell in this
+            # corpus is short (e.g. "44.315.000"); nothing resembling one is
+            # ever this long, so capping length keeps this column out of
+            # `money` and lets the elif below correctly count it as text.
+            if len(c) <= 20 and _parse_price(c) is not None and len(re.sub(r"\D", "", c)) >= 4:
                 money[i] += 1
             elif len(c.split()) == 1 and c.lower() in _UNIT_TOKENS:
                 unit[i] += 1
             elif len(c) >= 8:
-                text[i] += 1
+                text_hits[i] += 1
+                text_len[i] += len(c)
 
     n = len(rows)
     price_cols = [i for i in range(width) if money[i] >= n * 0.4]
     unit_cols = [i for i in range(width) if unit[i] >= n * 0.3]
     if not price_cols or not unit_cols:
         return None
-    price_col = price_cols[-1] if len(price_cols) == 1 else price_cols[0]
+    # Rightmost money-like column, per the docstring above ("lấy cột PHẢI
+    # NHẤT") — but the ternary here used to invert that whenever more than
+    # one column qualified (`price_cols[0]`, leftmost), which is exactly
+    # backwards. A long free-text description column often contains a
+    # boilerplate number that happens to parse as "money" (e.g. "chiều dài
+    # dây tối đa của 1 loop 2000m" repeated near-verbatim across dozens of
+    # product rows), and picking that over the real price column produced
+    # garbage prices like 2/4/6/8/10 for a whole page of fire-safety
+    # equipment (HaNoi_PhuLuc_BoSung.pdf) instead of the real 44.315.000-etc
+    # figures sitting in the actual rightmost column.
+    price_col = price_cols[-1]
     unit_col = unit_cols[0]
-    cand = [i for i in range(unit_col) if text[i] >= n * 0.3]
+    cand = [i for i in range(unit_col) if text_hits[i] >= n * 0.3]
     if not cand:
         return None
-    name_col = max(cand, key=lambda i: text[i])
+    name_col = max(cand, key=lambda i: text_len[i])
     return _ColumnMapping(
         name_col=name_col,
         unit_col=unit_col,
@@ -575,19 +602,25 @@ def _parse_data_rows(
             # A vendor block announces its company on this same heading row
             # ("Đèn led Thương hiệu: Philips OEM DHP | … | Công ty CP thiết bị
             # điện Đồng Hưng Phát"); the data rows below carry only "-nt-".
-            if manufacturer_col is not None and manufacturer_col < len(raw_cells):
-                heading_mfr = _norm_ws(raw_cells[manufacturer_col])
-                if _looks_like_org(heading_mfr):
-                    state.manufacturer = heading_mfr
+            heading_mfr = (
+                _norm_ws(raw_cells[manufacturer_col])
+                if manufacturer_col is not None and manufacturer_col < len(raw_cells)
+                else ""
+            )
+            if heading_mfr and _looks_like_org(heading_mfr):
+                state.manufacturer = heading_mfr
             elif _looks_like_org(heading_label):
-                # No dedicated manufacturer column, but the heading itself
-                # names one ("Mỏ đá Thanh Tâm của Công ty Cổ phần Thanh
-                # Tâm…") — capture it as manufacturer too, or it is lost
-                # entirely: the data rows below almost always carry their
-                # OWN populated category cell ("Đá xây dựng"), which always
-                # wins over state.category (see material_category below), so
-                # this heading would otherwise never be stored anywhere and
-                # the quarry/company becomes unfindable by any field.
+                # Either there is no dedicated manufacturer column at all, or
+                # there is one but it's EMPTY on this specific heading row —
+                # the company name landed in the name/category column
+                # instead ("Công ty TNHH Nhựa đường Petrolimex" as the whole
+                # heading, "Nhà sản xuất" blank until the price columns
+                # start further down). Either way, if the heading names an
+                # org, capture it: the data rows below almost always carry
+                # their OWN populated category cell ("Đá xây dựng"), which
+                # always wins over state.category (see material_category
+                # below), so this heading would otherwise never be stored
+                # anywhere and the company becomes unfindable by any field.
                 state.manufacturer = _norm_ws(heading_label)
             continue
 
