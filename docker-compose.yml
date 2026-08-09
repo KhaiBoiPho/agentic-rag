@@ -25,7 +25,7 @@ services:
   # ─── Frontend (Next.js) ─────────────────────────────────────────────────────
   ui:
     build:
-      context: ./web   # fresh Cốt frontend (old ./frontend left in place, unused)
+      context: ./web   # Cốt frontend
       dockerfile: Dockerfile
       args:
         API_PROXY_TARGET: http://app:8000   # also needed at build time — see Dockerfile

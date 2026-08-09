@@ -1,0 +1,7 @@
+config_id,model,prompt_hash,max_tokens,temperature,top_k,retriever,cache_version,total_queries,empty_outputs,length_outputs,em
+T1500_dense,openai/gpt-oss-20b,c8a3510d13dc6a4b91db3e95689c40ef4f78e0ff5c710832b1ca6bf59de45257,2000,0,5,dense,identity_v2,500,1,1,251
+T1500_bm25,openai/gpt-oss-20b,c8a3510d13dc6a4b91db3e95689c40ef4f78e0ff5c710832b1ca6bf59de45257,2000,0,5,dense_bm25_rrf,identity_v2,500,1,1,292
+R1500_dense,openai/gpt-oss-20b,c8a3510d13dc6a4b91db3e95689c40ef4f78e0ff5c710832b1ca6bf59de45257,2000,0,5,dense,identity_v2,500,3,3,227
+R1500_bm25,openai/gpt-oss-20b,c8a3510d13dc6a4b91db3e95689c40ef4f78e0ff5c710832b1ca6bf59de45257,2000,0,5,dense_bm25_rrf,identity_v2,500,3,3,256
+T1500_refusal_bm25,openai/gpt-oss-20b,c8a3510d13dc6a4b91db3e95689c40ef4f78e0ff5c710832b1ca6bf59de45257,2000,0,5,dense_bm25_rrf,identity_v2,70,0,0,44
+R1500_refusal_bm25,openai/gpt-oss-20b,c8a3510d13dc6a4b91db3e95689c40ef4f78e0ff5c710832b1ca6bf59de45257,2000,0,5,dense_bm25_rrf,identity_v2,70,0,0,47

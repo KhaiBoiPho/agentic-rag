@@ -16,11 +16,23 @@ function loadLang(): Lang {
   return v === "en" ? "en" : "vi";
 }
 
+// The model id that used to be the default. A returning user has it pinned in
+// localStorage from before the production model changed, so without this they
+// would keep talking to the old model forever while the UI claimed otherwise.
+// Only THIS id is migrated — a model the user actually picked is left alone.
+const SUPERSEDED_DEFAULT_MODELS = ["openai/gpt-4o-mini"];
+
 function loadSettings(): AppSettings {
   if (typeof window !== "undefined") {
     try {
       const raw = localStorage.getItem(SETTINGS_KEY);
-      if (raw) return { ...defaultSettings(), ...JSON.parse(raw) };
+      if (raw) {
+        const stored = { ...defaultSettings(), ...JSON.parse(raw) } as AppSettings;
+        if (SUPERSEDED_DEFAULT_MODELS.includes(stored.model)) {
+          stored.model = DEFAULT_MODEL;
+        }
+        return stored;
+      }
     } catch {
       /* ignore */
     }
@@ -83,6 +95,7 @@ interface Store {
 
   loadKbs: () => Promise<void>;
   loadProjects: () => Promise<void>;
+  syncBackendConfig: () => Promise<void>;
   setActiveKb: (id: string | null) => void;
   setActiveProject: (id: string | null) => void;
   setSettings: (s: Partial<AppSettings>) => void;
@@ -110,6 +123,22 @@ export const useStore = create<Store>((set, get) => ({
   loadProjects: async () => {
     const projects = await api.get<Project[]>("/api/v1/projects");
     set({ projects });
+  },
+  // The backend owns the production model id. This aligns the picker with what
+  // a request that omits `model` would actually use — the two used to drift,
+  // and the UI showed a model the server had stopped defaulting to. Only
+  // touches settings the user has not deviated from; an explicit pick wins.
+  syncBackendConfig: async () => {
+    const cfg = await api.get<{ default_model: string }>("/api/v1/config/chat");
+    if (!cfg?.default_model) return;
+    const current = get().settings;
+    const untouched =
+      !current.model ||
+      current.model === DEFAULT_MODEL ||
+      SUPERSEDED_DEFAULT_MODELS.includes(current.model);
+    if (untouched && current.model !== cfg.default_model) {
+      get().setSettings({ model: cfg.default_model });
+    }
   },
   setActiveKb: (id) => set({ activeKbId: id, activeProjectId: null }),
   setActiveProject: (id) => set({ activeProjectId: id, activeKbId: null }),

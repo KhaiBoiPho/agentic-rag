@@ -23,6 +23,11 @@ export interface KB {
   /** When true, uploads into this KB also extract structured price rows into
    *  material_prices (region is then required at upload time). */
   price_extraction: boolean;
+  /** Which chunking profile uploads use — false = standard (prose with
+   *  incidental tables), true = table-heavy (long price appendices: tighter
+   *  chunk cap, no borrowed table context). Independent of price_extraction.
+   *  See app/core/chunking/profiles.py. */
+  table_heavy_chunking: boolean;
 }
 
 export type DocStatus = "pending" | "processing" | "done" | "error";
@@ -86,14 +91,50 @@ export interface Usage {
 // RAG, web search and deep research respectively.
 export type ChatMode = "chat" | "search" | "research" | "agentic";
 
-// A RAG document citation OR a web citation OR an agent tool log.
-export interface RagSource {
+// ── Answer sources ─────────────────────────────────────────────────────────
+//
+// The backend now emits ONE normalized shape for every citation (see
+// app/core/chat/sources.py). The legacy keys are still present on every item,
+// so the type guards below keep working on conversations persisted before the
+// change; the normalized fields are optional for exactly that reason.
+//
+// `region` is the important one: it is the citation's OWN region, read from
+// material_prices.region or the Qdrant chunk metadata. It is NEVER the region
+// the user asked about, and the UI must render it as-is — a chip that inherits
+// the request's region is how a Hà Nội source used to display as TP.HCM.
+
+export type SourceKind = "tool" | "rag" | "web";
+export type SourceAuthority = "authoritative" | "supporting" | "unverified";
+
+export interface NormalizedSourceFields {
+  source_id?: string;
+  source_kind?: SourceKind;
+  authority?: SourceAuthority;
+  used_for?: "price" | "structured_field" | "explanation" | "estimate";
+  document_id?: string | null;
+  filename?: string | null;
+  page_num?: number | null;
+  row_id?: string | null;
+  /** "HN" | "DN" | "HCM" | "KH" | "AG" — or null for a region-neutral source.
+   *  null must render as "Không gắn vùng", never as the requested region. */
+  region?: string | null;
+  region_label?: string | null;
+  price_period?: string | null;
+  /** What `score` means. "rrf" is a reciprocal-rank-fusion score (~0.03 at the
+   *  top of a hybrid result set) — it is NOT a similarity and must never be
+   *  rendered as a percentage. "exact" is a structured row, "cosine" the
+   *  dense-only fallback. Absent on sources persisted before hybrid search. */
+  score_kind?: "cosine" | "rrf" | "exact";
+  used_in_answer?: boolean;
+}
+
+export interface RagSource extends NormalizedSourceFields {
   chunk_id?: string;
   document_name: string;
   content?: string;
   score: number;
 }
-export interface WebSource {
+export interface WebSource extends NormalizedSourceFields {
   url: string;
   title: string;
   snippet?: string;
@@ -110,6 +151,14 @@ export function isRagSource(s: Source): s is RagSource {
 }
 export function isWebSource(s: Source): s is WebSource {
   return typeof (s as WebSource).url === "string" && typeof (s as WebSource).title === "string";
+}
+/** A citation the tool produced (a material_prices row), as opposed to a
+ *  retrieved chunk. Falls back to "rag" for legacy items that predate the
+ *  field — an old conversation has no tool citations to mislabel. */
+export function sourceKind(s: Source): SourceKind {
+  const k = (s as NormalizedSourceFields).source_kind;
+  if (k) return k;
+  return isWebSource(s) ? "web" : "rag";
 }
 
 export interface RagContext {
@@ -157,6 +206,12 @@ export interface ChatMessage {
   viaVoice?: boolean;
   error?: string;
   pinned?: boolean;
+  /** Which kinds of source actually back this answer — drives the badge.
+   *  Sent by the backend on the `done` event; absent on legacy messages. */
+  sourceKinds?: SourceKind[];
+  /** The route the backend took (exact_structured / mixed / document_rag / …).
+   *  Display/debug only; the badge reads sourceKinds. */
+  route?: string;
 }
 
 export interface Conversation {

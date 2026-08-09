@@ -6,11 +6,16 @@ Run INSIDE the app container:
     python scripts/purge_orphaned_vectors.py --dry-run
     python scripts/purge_orphaned_vectors.py --apply
 
-Why these exist: deleting a *document* cleans Qdrant
-(documents.py:delete_document), but deleting a *knowledge base* does not —
-`KnowledgeBaseRepository.delete` drops the KB and cascades its documents in
-Postgres while leaving every vector behind. Earlier re-ingests under
+Why these exist: deleting a *knowledge base* used to drop the KB and cascade
+its documents in Postgres while leaving every vector behind — one production
+deletion left 4.060 orphaned points that way. Earlier re-ingests under
 different filenames left the same residue.
+
+THE LEAK IS CLOSED. `delete_kb` now calls `QdrantStore.delete_by_kb` before
+the Postgres delete, and `tests/test_deletion_integration.py` fails if either
+deletion path stops removing vectors. This script remains for the residue
+already in the collection, and for anything a future crash leaves half-done —
+it is a cleanup tool, no longer a workaround.
 
 These are not harmless. Retrieval filters on `kb_id`, which the orphaned
 payloads still carry, so stale copies of superseded documents keep surfacing

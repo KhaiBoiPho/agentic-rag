@@ -5,7 +5,7 @@ import { apiFetch } from "@/lib/api";
 import { streamSSE } from "@/lib/sse";
 import { loadMessages, saveMessages, useStore } from "@/lib/store";
 import { useT } from "@/lib/i18n";
-import { isRagSource, type ChatMessage, type ChatMode, type ConversationHistoryResponse, type KB, type ResearchStep } from "@/lib/types";
+import { sourceKind, type ChatMessage, type ChatMode, type ConversationHistoryResponse, type KB, type ResearchStep } from "@/lib/types";
 import TopBar from "../TopBar";
 import { Book, Bot, Globe } from "../Icons";
 import MessageBubble from "./MessageBubble";
@@ -31,12 +31,17 @@ function historyToMessages(resp: ConversationHistoryResponse, kbs: KB[], ragFall
       return { id: m.id, role: "user", content: m.content };
     }
     const sources = m.sources ?? [];
-    const hasRag = sources.some(isRagSource);
+    // Persisted sources keep their normalized metadata (region, kind), so a
+    // reloaded conversation shows the same regions it showed live — the
+    // history round-trip used to be a second place where region was lost.
+    const kinds = Array.from(new Set(sources.map(sourceKind)));
+    const hasRag = kinds.includes("rag");
     return {
       id: m.id,
       role: "assistant",
       content: m.content,
       sources,
+      sourceKinds: kinds,
       ragContext: hasRag ? { kind: "kb" as const, name: kbName ?? ragFallbackLabel } : null,
     };
   });
@@ -332,7 +337,12 @@ export default function ChatView({ conversationId }: { conversationId: string })
       all_kbs: !!opts.agentic,
       top_k: settings.top_k,
       score_threshold: 0.5,
-      mode: opts.agentic ? "agent" : "rag",
+      // "auto" lets the Request Router decide (price → tool, narrative → RAG,
+      // mixed → both). "rag" still exists as an explicit RAG-only override for
+      // any client that wants it; we no longer send it by default, because it
+      // is precisely the mode in which a price question is answered out of a
+      // retrieved chunk.
+      mode: opts.agentic ? "agent" : "auto",
       form_submission: opts.formSubmission ?? null,
       via_voice: !!opts.viaVoice,
     };
@@ -349,7 +359,13 @@ export default function ChatView({ conversationId }: { conversationId: string })
           if (ev.delta) append(aId, ev.delta);
           if (ev.done) {
             const rc = ev.rag_context ? { kind: ev.rag_context.kind, name: ev.rag_context.name } : null;
-            finalize(aId, { streaming: false, sources: ev.sources ?? [], ragContext: rc });
+            finalize(aId, {
+              streaming: false,
+              sources: ev.sources ?? [],
+              ragContext: rc,
+              sourceKinds: ev.source_kinds ?? undefined,
+              route: ev.route ?? undefined,
+            });
             maybeSpeak(aId, opts.viaVoice);
           }
         }

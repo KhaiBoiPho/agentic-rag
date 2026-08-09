@@ -190,6 +190,12 @@ textarea.control{resize:vertical;line-height:1.5;}
   border:1px solid var(--brand-line);border-radius:100px;padding:4px 11px 4px 8px;font-size:var(--fs-xs);text-decoration:none;}
 .chip .idx{font-family:var(--f-mono);font-weight:700;font-size:10px;}
 .chip .score{font-family:var(--f-mono);font-variant-numeric:tabular-nums;opacity:.85;}
+/* The region a citation actually belongs to. Given its own pill because the
+   whole point is that it must be readable at a glance next to the filename —
+   the original bug hid behind a filename that merely LOOKED like a region. */
+.chip .chip-region{font-weight:600;background:var(--bg);border:1px solid var(--brand-line);
+  border-radius:100px;padding:1px 7px;font-size:10px;white-space:nowrap;}
+.chip .chip-period{font-family:var(--f-mono);font-size:10px;opacity:.7;white-space:nowrap;}
 sup.ref{font-family:var(--f-mono);font-size:9px;font-weight:700;background:var(--warn-soft);color:var(--warn);
   padding:1px 4px;border-radius:3px;margin:0 1px;vertical-align:super;line-height:1;text-decoration:none;}
 

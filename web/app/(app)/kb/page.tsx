@@ -104,6 +104,11 @@ export default function KbPage() {
                       {t.kb.priceBadge}
                     </span>
                   )}
+                  {kb.table_heavy_chunking && (
+                    <span className="sys" style={{ position: "static" }} title={t.kb.tableHeavyHint}>
+                      {t.kb.tableHeavyBadge}
+                    </span>
+                  )}
                 </div>
                 <div className="desc">{kb.description || "—"}</div>
                 <div className="foot">

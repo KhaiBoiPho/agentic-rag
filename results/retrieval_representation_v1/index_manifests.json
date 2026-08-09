@@ -1,0 +1,82 @@
+{
+  "T1500_DENSE": {
+    "experiment_version": "retrieval_repr_v1",
+    "index_name": "T1500_DENSE",
+    "representation": "DENSE",
+    "chunk_count": 2252,
+    "chunk_digest": "4b37a5ed9cfdc71b591d28bacc024e42e8ebe679ab10903583897e072da5c95b",
+    "canonical_fingerprint_digest": "f24169afa32facf4b710656168f1c937452086018606f2a4d1a2431033cd6ce8",
+    "question_digest": "b088915f436bec934ae17cd9cebcecdf9b923a5d00ae93f35dcfd583e00a3e10",
+    "embedding_model": "openai/text-embedding-3-small",
+    "retrieval_type": "dense cosine top10",
+    "retrieval_parameters": {
+      "top_k": 10,
+      "metric": "cosine"
+    },
+    "created_at": "2026-08-06T20:59:24.264984+00:00"
+  },
+  "R1500_DENSE": {
+    "experiment_version": "retrieval_repr_v1",
+    "index_name": "R1500_DENSE",
+    "representation": "DENSE",
+    "chunk_count": 790,
+    "chunk_digest": "ef9f27141658502ed1cce3a9b2f8c98443b6bbdea16cb1e1dff03c7ce07b1cb1",
+    "canonical_fingerprint_digest": "3418dab9548454feea2b3d53c99795b0b79d419790b2316aa1b071004678aa16",
+    "question_digest": "b088915f436bec934ae17cd9cebcecdf9b923a5d00ae93f35dcfd583e00a3e10",
+    "embedding_model": "openai/text-embedding-3-small",
+    "retrieval_type": "dense cosine top10",
+    "retrieval_parameters": {
+      "top_k": 10,
+      "metric": "cosine"
+    },
+    "created_at": "2026-08-06T20:59:24.279016+00:00"
+  },
+  "T1500_EMBED_HTML": {
+    "experiment_version": "retrieval_repr_v1",
+    "index_name": "T1500_EMBED_HTML",
+    "representation": "HTML",
+    "chunk_count": 2252,
+    "chunk_digest": "4b37a5ed9cfdc71b591d28bacc024e42e8ebe679ab10903583897e072da5c95b",
+    "canonical_fingerprint_digest": "f24169afa32facf4b710656168f1c937452086018606f2a4d1a2431033cd6ce8",
+    "question_digest": "b088915f436bec934ae17cd9cebcecdf9b923a5d00ae93f35dcfd583e00a3e10",
+    "embedding_model": "openai/text-embedding-3-small",
+    "retrieval_type": "dense cosine top10",
+    "retrieval_parameters": {
+      "top_k": 10,
+      "metric": "cosine"
+    },
+    "created_at": "2026-08-06T20:59:24.301471+00:00"
+  },
+  "T1500_EMBED_KV": {
+    "experiment_version": "retrieval_repr_v1",
+    "index_name": "T1500_EMBED_KV",
+    "representation": "KV",
+    "chunk_count": 2252,
+    "chunk_digest": "95c4f1f0b76fbee017d2e71ebc2b96d828b9a10e7be4207d2cc6bbcb3964e438",
+    "canonical_fingerprint_digest": "f24169afa32facf4b710656168f1c937452086018606f2a4d1a2431033cd6ce8",
+    "question_digest": "b088915f436bec934ae17cd9cebcecdf9b923a5d00ae93f35dcfd583e00a3e10",
+    "embedding_model": "openai/text-embedding-3-small",
+    "retrieval_type": "dense cosine top10",
+    "retrieval_parameters": {
+      "top_k": 10,
+      "metric": "cosine"
+    },
+    "created_at": "2026-08-06T20:59:24.346021+00:00"
+  },
+  "T1500_EMBED_VERB": {
+    "experiment_version": "retrieval_repr_v1",
+    "index_name": "T1500_EMBED_VERB",
+    "representation": "VERB",
+    "chunk_count": 2252,
+    "chunk_digest": "4e77e1974f23402a1e836e45097a493edab801331489c0a46983af625844c4de",
+    "canonical_fingerprint_digest": "f24169afa32facf4b710656168f1c937452086018606f2a4d1a2431033cd6ce8",
+    "question_digest": "b088915f436bec934ae17cd9cebcecdf9b923a5d00ae93f35dcfd583e00a3e10",
+    "embedding_model": "openai/text-embedding-3-small",
+    "retrieval_type": "dense cosine top10",
+    "retrieval_parameters": {
+      "top_k": 10,
+      "metric": "cosine"
+    },
+    "created_at": "2026-08-06T20:59:24.398620+00:00"
+  }
+}

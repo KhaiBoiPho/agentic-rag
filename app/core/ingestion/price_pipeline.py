@@ -20,6 +20,7 @@ from app.core.chunking.base import (
     enforce_chunk_caps,
 )
 from app.core.chunking.dispatcher import ChunkDispatcher
+from app.core.chunking.profiles import profile_from_config
 from app.core.ingestion.price_extractor import classify_source_file, extract_price_rows
 from app.core.llm.openrouter import OpenRouterClient
 from app.db.postgres.repositories.document_repo import DocumentRepository
@@ -59,7 +60,7 @@ class PriceExtractionPipeline:
         # behaviour) left the upload looking silently lost — a job id was
         # returned, then nothing ever appeared in the KB.
         if not region:
-            msg = "Thiếu vùng giá (HN | DN | HCM) — không trích xuất được dữ liệu giá."
+            msg = "Thiếu vùng giá (HN | DN | HCM | KH) — không trích xuất được dữ liệu giá."
             await self._doc_repo.update_status(doc_id, "error", error=msg)
             yield {"stage": "error", "error": msg, "progress": 0.0, "done": True}
             return
@@ -71,12 +72,18 @@ class PriceExtractionPipeline:
 
         yield {"stage": "parsing", "progress": 0.1, "done": False}
 
+        # Which ChunkProfile this KB asked for. A price appendix is the case
+        # TABLE_HEAVY exists for — tighter cap, no borrowed table context —
+        # but the flag is per-KB, so a price KB holding ordinary documents can
+        # still be left on STANDARD.
+        profile = profile_from_config(config)
+
         # 1. Narrative chunks -> Qdrant (context for RAG)
         try:
             dispatcher = ChunkDispatcher(
-                chunk_token_num=config.get("chunk_token_num", 512),
-                overlap_percent=config.get("chunk_overlap_pct", 15),
-                table_context_size=config.get("table_context_size", 128),
+                chunk_token_num=profile.text_token_num,
+                overlap_percent=profile.overlap_percent,
+                table_context_size=profile.table_context_size,
             )
             chunks = dispatcher.chunk(
                 filename=filename, content=content, document_id=doc_id, kb_id=kb_id
@@ -99,9 +106,9 @@ class PriceExtractionPipeline:
                     filename,
                     doc_id,
                     kb_id,
-                    chunk_token_num=config.get("chunk_token_num", 512),
-                    overlap_percent=config.get("chunk_overlap_pct", 15),
-                    table_context_size=config.get("table_context_size", 128),
+                    chunk_token_num=profile.text_token_num,
+                    overlap_percent=profile.overlap_percent,
+                    table_context_size=profile.table_context_size,
                 )
                 chunks = ocr.chunks
                 ocr_tables = ocr.tables or None
@@ -113,7 +120,18 @@ class PriceExtractionPipeline:
                 {"region": region, "source_type": source_type, "price_period": price_period}
             )
 
-        chunks = enforce_chunk_caps(chunks, doc_id, logger)
+        chunks = enforce_chunk_caps(
+            chunks, doc_id, logger, table_cap_tokens=profile.table_cap_tokens
+        )
+        logger.info(
+            "doc_id=%s: chunk profile=%s (text=%d, ctx=%d, table_cap=%d) -> %d chunks",
+            doc_id,
+            profile.name,
+            profile.text_token_num,
+            profile.table_context_size,
+            profile.table_cap_tokens,
+            len(chunks),
+        )
 
         yield {"stage": "chunking", "progress": 0.25, "chunks_total": len(chunks), "done": False}
 

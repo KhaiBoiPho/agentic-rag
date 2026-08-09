@@ -5,7 +5,7 @@ import unicodedata
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from app.db.postgres.base import get_session
 from app.db.postgres.models import MaterialPrice
@@ -97,8 +97,27 @@ def _has_word(col, word: str):
     user's words) without the accidental collisions.
 
     Tokens come from `_match_words`, which yields `[0-9a-z]+` only, so there is
-    nothing to escape. pg_trgm's GIN index still serves `~`."""
-    return func.lower(func.immutable_unaccent(col)).op("~")(rf"\m{word}\M")
+    A SECOND lane matches the same word against the column with in-word
+    separators removed, because `_match_words` splits on them and the two
+    sides then disagree about where a product code begins and ends:
+
+        người dùng gõ "PC30"   -> ['pc30']
+        tên trong DB  "PC-30"  -> ['pc', '30']      -> \\mpc30\\M không khớp
+
+    Measured on the live corpus before this lane existed: `cáp điện CXV-150`
+    found the row, `cáp điện CXV150` found NOTHING — same product; and
+    `xi măng PCB40` returned 14 rows while `xi măng PCB-40` returned 1. The
+    generated benchmark put a number on it: queries with a broken code scored
+    18 points below queries with the stored spelling, the worst of the four
+    axes in every configuration.
+
+    The lane only ADDS candidates — the AND across the user's other words
+    still applies, and the "never drop a token with a digit" guard is
+    untouched — so it cannot resurrect the wrong-product failures that guard
+    exists to prevent."""
+    plain = func.lower(func.immutable_unaccent(col))
+    squashed = func.regexp_replace(plain, r"[-._/]", "", "g")
+    return or_(plain.op("~")(rf"\m{word}\M"), squashed.op("~")(rf"\m{word}\M"))
 
 
 def _norm_name():

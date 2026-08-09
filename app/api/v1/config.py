@@ -6,6 +6,8 @@ from pathlib import Path
 
 from fastapi import APIRouter
 
+from app.config import settings
+
 router = APIRouter()
 
 _SKILLS_DIR = Path(__file__).parent.parent.parent / "core" / "skills"
@@ -33,3 +35,27 @@ async def get_skills():
         if (_SKILLS_DIR / f"{sid}.md").exists():
             skills.append({"id": sid, **meta})
     return {"skills": skills}
+
+
+@router.get("/chat")
+async def get_chat_config():
+    """What the chat UI needs to agree with the backend about.
+
+    `default_model` exists so the frontend stops shipping its own copy of the
+    production model id: the two drifted, and the model shown in the picker was
+    not the model a request without an explicit `model` actually used. The
+    frontend reads this and falls back to its bundled constant only if the call
+    fails (offline/first paint).
+
+    Deliberately no API key, no base URL, no provider credentials.
+    """
+    return {
+        "default_model": settings.openrouter_chat_model,
+        "default_mode": "auto",
+        "regions": [
+            {"code": "HN", "label": "Hà Nội"},
+            {"code": "DN", "label": "Đà Nẵng"},
+            {"code": "HCM", "label": "TP. Hồ Chí Minh"},
+        ],
+        "allow_web_fallback_default": False,
+    }

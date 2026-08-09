@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import delete as sa_delete, func, select
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import func, select
 
 from app.db.postgres.base import get_session
 from app.db.postgres.models import Document, KnowledgeBase, MaterialPrice

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import AsyncGenerator
 
@@ -12,7 +13,7 @@ from pydantic import BaseModel
 
 from app.api.deps import SSE_HEADERS, CurrentUser
 from app.api.v1.config import load_skill_prompt
-from app.core.bootstrap.constants import KB_PRICING_ID
+from app.config import settings
 from app.core.chat.followup import condense_followup
 from app.core.chat.intent import (
     FORM_SCHEMAS,
@@ -21,13 +22,33 @@ from app.core.chat.intent import (
     detect_small_talk,
     prefill_from_text,
 )
+from app.core.chat.price_answer import (
+    build_price_prompt,
+    deterministic_reply,
+    price_sources,
+)
+from app.core.chat.router import RequestRoute, RouteDecision, route_request
+from app.core.chat.sources import (
+    REGION_LABELS,
+    AnswerSource,
+    dedupe_sources,
+    filter_sources_by_region,
+    rag_source,
+    source_kinds,
+    to_wire,
+    tool_source,
+    web_source,
+)
 from app.core.chat.topic_guard import is_off_topic, refusal_reply
 from app.core.chunking.base import count_tokens
 from app.core.llm.openrouter import OpenRouterClient
+from app.core.pricing.service import lookup_material_record
 from app.core.retrieval.retriever import Retriever
 from app.core.usage.pricing import estimate_cost_usd
 from app.db.postgres.repositories.message_repo import MessageRepository
 from app.db.postgres.repositories.usage_repo import UsageRepository
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -109,7 +130,7 @@ def _sse(payload: dict) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
-_REGION_NAMES = {"HN": "Hà Nội", "DN": "Đà Nẵng", "HCM": "TPHCM"}
+_REGION_NAMES = REGION_LABELS  # single mapping — see app/core/chat/sources.py
 
 
 def _format_context_chunk(i: int, c) -> str:
@@ -158,7 +179,20 @@ class ChatRequest(BaseModel):
     # price PDFs at 31-33% and displayed them as if they backed the answer.
     # 0.5 is a much more honest "this chunk is actually about the query" bar.
     score_threshold: float = 0.5
-    mode: str = "rag"  # "rag" | "agent" — "agent" lets the LLM call construction-cost tools
+    # "auto"  — the Request Router decides (production default, §4). A price
+    #           question goes to the tool from the backend; a narrative one
+    #           goes to RAG; a mixed one uses both, tool authoritative.
+    # "rag"   — the user deliberately forces RAG-only. Kept, unchanged.
+    # "agent" — the tool loop, kept for open-ended agentic turns; exact price
+    #           questions are STILL forced through the tool first (§11).
+    # Defaulting to "auto" rather than "rag" is what makes a request that omits
+    # `mode` (and every new client) get the routed pipeline; old clients that
+    # explicitly send "rag"/"agent" keep exactly the behaviour they had.
+    mode: str = "auto"
+    # Web price fallback is OFF in production (§10). A missing price is
+    # reported as missing; it is never quietly filled from a search result.
+    # Opt-in per request, and even then the figure is labelled unverified.
+    allow_web_fallback: bool = False
     # Agentic mode: retrieve across EVERY knowledge base the user can see
     # (the 4 system ones + their own) instead of a single kb_id/project_id.
     # Resolved server-side on each request rather than sent as a list by the
@@ -225,6 +259,91 @@ async def _retrieval_query(llm, message: str, history: list[dict]) -> str:
     return f"{prev_user} {message}" if prev_user else message
 
 
+async def _retrieve(
+    retriever: Retriever,
+    *,
+    query: str,
+    kb_scope: str | list[str] | None,
+    top_k: int,
+    score_threshold: float,
+    regions: list[str],
+) -> tuple[list, list[AnswerSource], dict]:
+    """Region-aware retrieval + normalized, region-filtered sources.
+
+    This is the second half of the P0 fix. Region-scoped retrieval used to be
+    gated on `body.kb_id == KB_PRICING_ID`, so it did nothing at all in
+    Agentic mode (`all_kbs`) or Project mode — which is exactly where a
+    question about TP. Hồ Chí Minh pulled Hà Nội and Đà Nẵng price chunks and
+    showed them as sources. The scoping now follows the REQUEST's regions, not
+    which knowledge base happens to be selected.
+
+    Returns the surviving chunks (so the LLM context is built from the same set
+    the user is shown), the normalized sources, and an audit dict for the
+    structured log — a filter that silently drops citations is how this class
+    of bug stays invisible.
+    """
+    if not kb_scope:
+        return [], [], {}
+
+    if len(regions) >= 2:
+        # A comparison ("so sánh giá thép HN và ĐN") retrieves per region and
+        # merges, so each region is guaranteed a seat — a single unfiltered
+        # search lets the higher-scoring region take the whole top-k. The
+        # looser threshold is because comparison phrasing dilutes the
+        # embedding enough to push the right chunk just under the 0.5 bar.
+        cmp_threshold = min(score_threshold, 0.4)
+        chunks: list = []
+        seen: set[str] = set()
+        for rg in regions:
+            for c in await retriever.search(
+                query=query, kb_id=kb_scope, top_k=4, score_threshold=cmp_threshold, region=rg
+            ):
+                if c.chunk_id not in seen:
+                    seen.add(c.chunk_id)
+                    chunks.append(c)
+    elif len(regions) == 1:
+        # Region-filtered, looser threshold: price rows sit in big mixed table
+        # chunks that embed weakly against a single-material query (HN cement
+        # lands ~0.45-0.48). Contamination stays bounded by the region filter.
+        chunks = await retriever.search(
+            query=query,
+            kb_id=kb_scope,
+            top_k=top_k,
+            score_threshold=min(score_threshold, 0.4),
+            region=regions[0],
+        )
+    else:
+        chunks = await retriever.search(
+            query=query, kb_id=kb_scope, top_k=top_k, score_threshold=score_threshold
+        )
+
+    raw = [rag_source(c) for c in chunks]
+    kept, dropped = filter_sources_by_region(raw, regions)
+    kept = dedupe_sources(kept)
+    kept_ids = {s.chunk_id for s in kept}
+    audit = {
+        "rag_source_count_before_filter": len(raw),
+        "rag_source_count_after_filter": len(kept),
+        "source_regions_before_filter": sorted({s.region or "none" for s in raw}),
+        "source_regions_after_filter": sorted({s.region or "none" for s in kept}),
+        "source_region_filtered": len(dropped),
+    }
+    return [c for c in chunks if c.chunk_id in kept_ids], kept, audit
+
+
+def _log_turn(decision: RouteDecision | None, **extra) -> None:
+    """One structured line per turn. No message text, no API keys (§13)."""
+    payload = {
+        "route": decision.route.value if decision else None,
+        "intent": decision.intent if decision else None,
+        "decided_by": decision.decided_by if decision else None,
+        "requested_regions": decision.regions if decision else [],
+        "production_model": settings.openrouter_chat_model,
+        **extra,
+    }
+    logger.info("chat_turn %s", json.dumps(payload, ensure_ascii=False, default=str))
+
+
 class HistoryMessage(BaseModel):
     id: str
     role: str  # "user" | "assistant"
@@ -254,8 +373,6 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
             system_prompt = loaded
 
     async def generate() -> AsyncGenerator[str, None]:
-        sources = []
-
         # ─── Human-in-the-loop form submission ─────────────────────────────
         # A prior turn returned a form_request (see below); the user filled
         # it in on the frontend and this turn carries the structured result.
@@ -282,18 +399,31 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
                 # derives an achievable area in build_cost_facts() instead of
                 # only ever answering "what does the area you typed cost".
                 target_budget = data.get("target_budget_vnd")
+                # Fail-closed by default (§10): a line item with no published
+                # price is reported as missing and no total is given, rather
+                # than being topped up from a web search.
+                tool_args["allow_web_fallback"] = body.allow_web_fallback
                 cost = await _compute_cost(tool_args)
                 if cost.get("error"):
                     yield _sse({"type": "text", "delta": cost["error"], "done": False})
                     yield _sse({"type": "text", "delta": "", "done": True, "sources": []})
                     return
-                # Two kinds of citation coexist: DB prices carry their source
-                # document (RAG chips: document_name + score), web-fallback
-                # prices carry url+title ([n] badges + "Nguồn" footer). The
-                # frontend already renders each shape by which keys are set.
-                form_sources = cost["rag_sources"] + [
-                    {"url": s["url"], "title": s["title"]} for s in cost["web_sources"]
-                ]
+                # Two kinds of citation coexist and are now normalized into one
+                # shape: DB prices are TOOL sources (authoritative, carrying the
+                # region the estimate was priced in), web-fallback prices are
+                # WEB sources (unverified). Both still serialize with their
+                # legacy keys so the existing renderers keep working.
+                form_answer_sources = [
+                    tool_source(
+                        row_id=s["document_id"],
+                        region=tool_args["region"],
+                        document_id=s["document_id"],
+                        filename=s["document_name"],
+                        used_for="estimate",
+                    )
+                    for s in cost["rag_sources"]
+                ] + [web_source(url=s["url"], title=s["title"]) for s in cost["web_sources"]]
+                form_sources = to_wire(dedupe_sources(form_answer_sources))
                 # If any price came from the KB documents, label the answer as
                 # RAG against that KB — it's document-backed, not a plain chat.
                 rag_ctx = (
@@ -317,6 +447,8 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
                         "delta": "",
                         "done": True,
                         "sources": form_sources,
+                        "source_kinds": sorted(source_kinds(form_answer_sources)),
+                        "route": "estimate",
                         "rag_context": rag_ctx,
                     }
                 )
@@ -442,49 +574,181 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
                 yield _sse({"type": "text", "delta": "", "done": True, "sources": []})
                 return
 
-        if body.mode == "agent":
-            from app.core.llm.tool_loop import run_tool_loop
+        # ─── (4) History as memory + (5) slot normalization ────────────────
+        # Both the router and retrieval need the STANDALONE form of the turn:
+        # "còn ở Đà Nẵng thì sao?" carries no material and no searchable terms
+        # on its own, so routing it would find no price question and retrieving
+        # it would embed noise. Condensing happens once, up front, and every
+        # downstream step (router, region detection, retrieval) reads the same
+        # rewritten question — which is also why a follow-up now routes and
+        # cites the region it actually asks about (§12.14).
+        history: list[dict] = []
+        if body.conversation_id:
+            try:
+                history = await msg_repo.get_recent(body.conversation_id, limit=10)
+            except Exception:
+                history = []
 
-            # Same history-as-memory pattern as the plain RAG path below —
-            # without it a follow-up like "ở HCM thì sao" after "giá xây
-            # 100m2 ở Hà Nội" has no idea what area/finish_level it is even
-            # talking about and can't call the cost tool with inferred
-            # parameters.
-            agent_history: list[dict] = []
-            if body.conversation_id:
-                try:
-                    agent_history = await msg_repo.get_recent(body.conversation_id, limit=10)
-                except Exception:
-                    agent_history = []
+        resolved_query = await _retrieval_query(llm, body.message, history)
+        kb_scope, scope_name = await _resolve_rag_scope(body, str(current_user.id))
 
-            # Agentic mode answers from documents AND tools, not tools alone:
-            # "giá xi măng PCB40" is a material_prices lookup, but "xi măng
-            # PCB40 khác PCB30 chỗ nào" only exists in the narrative chunks.
-            # Retrieval runs first so the model has both on the table before
-            # it decides whether a tool call is needed at all.
-            agent_kb_scope, agent_scope_name = await _resolve_rag_scope(body, str(current_user.id))
-            agent_sources: list[dict] = []
-            agent_ctx = ""
-            if body.use_rag and agent_kb_scope:
+        # ─── (6) Request Router — BEFORE retrieval, BEFORE the main LLM ────
+        # Mode "rag" is the user explicitly forcing RAG-only, so it skips
+        # routing; "auto" (default) and "agent" both route.
+        decision: RouteDecision | None = None
+        if body.mode in ("auto", "agent"):
+            decision = await route_request(resolved_query, llm=llm)
+        regions = decision.regions if decision else detect_regions(resolved_query)
+
+        # ─── (8) EXACT_STRUCTURED / MIXED / price CLARIFY ──────────────────
+        # The tool runs from the backend. Nothing here depends on the model
+        # choosing to call it, and no RAG context is assembled before the
+        # lookup — that ordering is what used to make the model answer a price
+        # question out of a retrieved table chunk.
+        price_routes = (RequestRoute.EXACT_STRUCTURED, RequestRoute.MIXED)
+        if decision is not None and (
+            decision.route in price_routes
+            or (decision.route is RequestRoute.CLARIFY and decision.intent == "price_lookup")
+        ):
+            t0 = time.perf_counter()
+            lookups = [
+                await lookup_material_record(
+                    region=rg,
+                    material_name=decision.material_name,
+                    material_category=decision.material_category,
+                    manufacturer=decision.manufacturer,
+                    requested_fields=decision.requested_fields or ["price"],
+                )
+                for rg in (decision.regions or [None])
+            ]
+            found_records = [rec for r in lookups if r.found for rec in r.records]
+
+            # Supporting prose (VAT, scope, notes) only — never a number (§7).
+            supporting_ctx = ""
+            supporting_srcs: list[AnswerSource] = []
+            audit: dict = {}
+            if decision.route is RequestRoute.MIXED and body.use_rag:
                 try:
-                    agent_chunks = await retriever.search(
-                        query=await _retrieval_query(llm, body.message, agent_history),
-                        kb_id=agent_kb_scope,
+                    sup_chunks, supporting_srcs, audit = await _retrieve(
+                        retriever,
+                        query=resolved_query,
+                        kb_scope=kb_scope,
                         top_k=body.top_k,
                         score_threshold=body.score_threshold,
+                        regions=regions,
+                    )
+                    supporting_ctx = "\n\n".join(
+                        _format_context_chunk(i, c) for i, c in enumerate(sup_chunks)
+                    )
+                except Exception:
+                    supporting_ctx = ""
+
+            tool_srcs = await price_sources(found_records)
+            answer_sources = dedupe_sources(tool_srcs + supporting_srcs)
+
+            reply = ""
+            if found_records:
+                prompt = build_price_prompt(
+                    body.message, found_records, supporting_ctx, results=lookups
+                )
+                async for token in llm.stream_chat(
+                    messages=[{"role": "user", "content": prompt}],
+                    model=body.model,
+                    temperature=0.2,
+                    max_tokens=body.max_tokens,
+                ):
+                    reply += token
+                    yield _sse({"type": "text", "delta": token, "done": False})
+            else:
+                # Terminal: MISSING_SLOTS / AMBIGUOUS / NOT_FOUND / ERROR.
+                # Emitted verbatim with no model call — the whole point is that
+                # nothing gets a chance to be helpful with a number here (§6).
+                blocked = lookups[0]
+                reply = deterministic_reply(blocked, decision.material_name) or ""
+                if decision.route is RequestRoute.MIXED and supporting_ctx:
+                    # §7 — the explanatory half can still be answered, as long
+                    # as the reply says plainly that no verified price was found.
+                    reply += "\n\n"
+                    yield _sse({"type": "text", "delta": reply, "done": False})
+                    explain_prompt = (
+                        "Trả lời phần GIẢI THÍCH của câu hỏi dưới đây CHỈ dựa trên tư liệu "
+                        "kèm theo. TUYỆT ĐỐI không nêu bất kỳ con số giá nào, kể cả khi tư "
+                        "liệu có chứa giá — hệ thống chưa xác minh được giá cho yêu cầu này "
+                        "và người dùng đã được thông báo điều đó.\n\n"
+                        f"Câu hỏi: {body.message}\n\nTư liệu:\n{supporting_ctx}\n\nTrả lời:"
+                    )
+                    async for token in llm.stream_chat(
+                        messages=[{"role": "user", "content": explain_prompt}],
+                        model=body.model,
+                        temperature=0.2,
+                        max_tokens=body.max_tokens,
+                    ):
+                        reply += token
+                        yield _sse({"type": "text", "delta": token, "done": False})
+                else:
+                    # A blocked price answer cites nothing: there is no
+                    # authoritative row, and shipping the RAG chips alongside
+                    # would suggest the number came from somewhere after all.
+                    answer_sources = []
+                    yield _sse({"type": "text", "delta": reply, "done": False})
+
+            wire_sources = to_wire(answer_sources)
+            yield _sse(
+                {
+                    "type": "text",
+                    "delta": "",
+                    "done": True,
+                    "sources": wire_sources,
+                    "source_kinds": sorted(source_kinds(answer_sources)),
+                    "route": decision.route.value,
+                    "rag_context": (
+                        {"kind": "kb", "name": scope_name or "Kho tri thức"}
+                        if any(s.source_kind == "rag" for s in answer_sources)
+                        else None
+                    ),
+                }
+            )
+            _log_turn(
+                decision,
+                tool_status=[r.status.value for r in lookups],
+                alias_retry=any(r.alias_retry for r in lookups),
+                resolved_region=[r.region for r in lookups],
+                tool_source_count=len(tool_srcs),
+                **audit,
+            )
+            await _persist(msg_repo, body, current_user, reply, wire_sources)
+            await _record_usage(current_user, body, system_prompt, reply, t0)
+            return
+
+        # ─── (8) ESTIMATE / GENERAL agentic turns — the tool loop ──────────
+        # ESTIMATE is forced into the tool loop even from "auto": every figure
+        # in a cost answer must come out of the cost/quantity tool's arithmetic
+        # (§3.0), never out of the model.
+        is_estimate = decision is not None and decision.route is RequestRoute.ESTIMATE
+        if body.mode == "agent" or is_estimate:
+            from app.core.llm.tool_loop import run_tool_loop
+
+            agent_history = history
+            # Agentic mode answers from documents AND tools, not tools alone:
+            # "xi măng PCB40 khác PCB30 chỗ nào" only exists in the narrative
+            # chunks. Retrieval is region-scoped like everywhere else now, so
+            # an agentic turn about TP.HCM can no longer surface a Hà Nội chunk.
+            agent_srcs: list[AnswerSource] = []
+            agent_ctx = ""
+            agent_audit: dict = {}
+            if body.use_rag and kb_scope:
+                try:
+                    agent_chunks, agent_srcs, agent_audit = await _retrieve(
+                        retriever,
+                        query=resolved_query,
+                        kb_scope=kb_scope,
+                        top_k=body.top_k,
+                        score_threshold=body.score_threshold,
+                        regions=regions,
                     )
                 except Exception:
                     agent_chunks = []
                 if agent_chunks:
-                    agent_sources = [
-                        {
-                            "chunk_id": c.chunk_id,
-                            "document_name": c.document_name,
-                            "content": c.content,
-                            "score": c.score,
-                        }
-                        for c in agent_chunks
-                    ]
                     agent_ctx = "\n\n".join(
                         _format_context_chunk(i, c) for i, c in enumerate(agent_chunks)
                     )
@@ -515,140 +779,57 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
                 )
             messages += [*agent_history, {"role": "user", "content": body.message}]
             t0 = time.perf_counter()
-            final_content, tool_call_log = await run_tool_loop(messages, llm=llm, model=body.model)
+            final_content, tool_call_log = await run_tool_loop(
+                messages, llm=llm, model=body.model, allow_web_fallback=body.allow_web_fallback
+            )
             yield _sse({"type": "text", "delta": final_content, "done": False})
+            # The raw tool-call log stays in the payload for debugging (it is
+            # what the old client rendered), but the citations the UI shows are
+            # the normalized ones — a tool log entry is not a source, and
+            # counting it as one is why a tool-only answer used to be badged
+            # "RAG" (§8.10).
+            wire_sources = to_wire(agent_srcs)
             yield _sse(
                 {
                     "type": "text",
                     "delta": "",
                     "done": True,
-                    "sources": agent_sources + tool_call_log,
+                    "sources": wire_sources,
+                    "tool_calls": tool_call_log,
+                    "source_kinds": sorted(
+                        source_kinds(agent_srcs) | ({"tool"} if tool_call_log else set())
+                    ),
+                    "route": decision.route.value if decision else "agent",
                     "rag_context": (
-                        {"kind": "kb", "name": agent_scope_name or "Kho tri thức"}
-                        if agent_sources
+                        {"kind": "kb", "name": scope_name or "Kho tri thức"}
+                        if agent_srcs
                         else None
                     ),
                 }
             )
-
-            if body.conversation_id:
-                try:
-                    await msg_repo.ensure_conversation(
-                        body.conversation_id,
-                        str(current_user.id),
-                        kb_id=body.kb_id,
-                        title=body.message[:512],
-                    )
-                    await msg_repo.add(body.conversation_id, "user", body.message)
-                    await msg_repo.add(body.conversation_id, "assistant", final_content)
-                except Exception:
-                    pass
-
-            try:
-                model_used = body.model or "openai/gpt-4o-mini"
-                prompt_tokens = count_tokens(system_prompt) + count_tokens(body.message)
-                completion_tokens = count_tokens(final_content)
-                await UsageRepository().record(
-                    user_id=str(current_user.id),
-                    model=model_used,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    cost_usd=estimate_cost_usd(model_used, prompt_tokens, completion_tokens),
-                    duration_ms=int((time.perf_counter() - t0) * 1000),
-                )
-            except Exception:
-                pass
+            _log_turn(
+                decision,
+                mode=body.mode,
+                tool_status=[c["name"] for c in tool_call_log],
+                **agent_audit,
+            )
+            await _persist(msg_repo, body, current_user, final_content, wire_sources)
+            await _record_usage(current_user, body, system_prompt, final_content, t0)
             return
 
-        search_kb_id, rag_scope_name = await _resolve_rag_scope(body, str(current_user.id))
-
-        # Prior turns (last N) as conversation memory. Persisted server-side
-        # (messages table) so multi-turn context survives without the client
-        # resending its whole history; fetched via the composite index added
-        # in migration 0006. Best-effort — a history failure must not break
-        # the reply, so it degrades to a single-turn (historyless) prompt.
-        # Fetched BEFORE retrieval because a deictic follow-up needs the prior
-        # turn to build a searchable retrieval query (see below).
-        history: list[dict] = []
-        if body.conversation_id:
-            try:
-                history = await msg_repo.get_recent(body.conversation_id, limit=10)
-            except Exception:
-                history = []
-
-        # A short follow-up ("còn ở Đà Nẵng thì sao?", "loại kia thì sao?")
-        # carries almost no searchable terms on its own — embedding it retrieves
-        # noise, so the model loses the thread. Rewrite it into a standalone
-        # question with a cheap model (condense step). Falls back to prepending
-        # the previous user turn if the rewrite is unavailable.
-        retrieval_query = (
-            await _retrieval_query(llm, body.message, history) if body.use_rag else body.message
-        )
-
-        # On the pricing KB, region-aware retrieval. Detect from the (possibly
-        # condensed) retrieval query so a follow-up like "còn Đà Nẵng?" still
-        # resolves its region. Only price chunks carry a region.
-        #   • exactly 1 region → hard-filter to it, so the correct-region chunk
-        #     can't be crowded out of the top-k by a wrong-region one.
-        #   • 2+ regions (a comparison, "so sánh giá thép HN và ĐN") → retrieve
-        #     SEPARATELY per region and merge, so each region is guaranteed a
-        #     seat; a single unfiltered search lets the higher-scoring region
-        #     dominate the top-k and starves the other, making comparison
-        #     impossible.
-        regions: list[str] = []
-        if body.kb_id == KB_PRICING_ID:
-            regions = detect_regions(retrieval_query)
-
-        if body.use_rag and search_kb_id:
-            if len(regions) >= 2:
-                # Each search is already region-scoped (so off-topic
-                # contamination is bounded), and a comparison-phrased query
-                # ("so sánh ... nơi nào rẻ hơn") dilutes the embedding enough to
-                # push the right chunk just under the normal 0.5 bar — so use a
-                # looser threshold here to keep recall on both regions.
-                cmp_threshold = min(body.score_threshold, 0.4)
-                chunks = []
-                seen: set[str] = set()
-                for rg in regions:
-                    for c in await retriever.search(
-                        query=retrieval_query,
-                        kb_id=search_kb_id,
-                        top_k=4,
-                        score_threshold=cmp_threshold,
-                        region=rg,
-                    ):
-                        if c.chunk_id not in seen:
-                            seen.add(c.chunk_id)
-                            chunks.append(c)
-            elif len(regions) == 1:
-                # Region-filtered (so contamination is bounded to the right
-                # region) — price rows sit in big mixed table chunks that embed
-                # weakly against a single-material query, scoring just under the
-                # 0.5 bar (e.g. HN cement chunks land ~0.45-0.48). A looser
-                # threshold recovers them without risking cross-region bleed.
-                chunks = await retriever.search(
-                    query=retrieval_query,
-                    kb_id=search_kb_id,
-                    top_k=body.top_k,
-                    score_threshold=min(body.score_threshold, 0.4),
-                    region=regions[0],
-                )
-            else:
-                chunks = await retriever.search(
-                    query=retrieval_query,
-                    kb_id=search_kb_id,
-                    top_k=body.top_k,
-                    score_threshold=body.score_threshold,
-                )
-            sources = [
-                {
-                    "chunk_id": c.chunk_id,
-                    "document_name": c.document_name,
-                    "content": c.content,
-                    "score": c.score,
-                }
-                for c in chunks
-            ]
+        # ─── (8) DOCUMENT_RAG / GENERAL_CHAT — and explicit mode="rag" ─────
+        chunks: list = []
+        sources: list[AnswerSource] = []
+        audit = {}
+        if body.use_rag and kb_scope:
+            chunks, sources, audit = await _retrieve(
+                retriever,
+                query=resolved_query,
+                kb_scope=kb_scope,
+                top_k=body.top_k,
+                score_threshold=body.score_threshold,
+                regions=regions,
+            )
             context = "\n\n".join(_format_context_chunk(i, c) for i, c in enumerate(chunks))
             user_msg = f"Context:\n{context}\n\nQuestion: {body.message}"
         else:
@@ -678,55 +859,72 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
         rag_ctx = (
             {
                 "kind": "project" if body.project_id else "kb",
-                "name": rag_scope_name or "Kho tri thức",
+                "name": scope_name or "Kho tri thức",
             }
             if sources
             else None
         )
+        wire_sources = to_wire(sources)
         yield _sse(
-            {"type": "text", "delta": "", "done": True, "sources": sources, "rag_context": rag_ctx}
+            {
+                "type": "text",
+                "delta": "",
+                "done": True,
+                "sources": wire_sources,
+                "source_kinds": sorted(source_kinds(sources)),
+                "route": decision.route.value if decision else body.mode,
+                "rag_context": rag_ctx,
+            }
         )
+        _log_turn(decision, mode=body.mode, resolved_region=regions, **audit)
 
         # Persist this turn for future context (best-effort — the reply has
         # already been delivered in full above, so a write failure is
         # harmless). Store the RAW user message, not the RAG-context-wrapped
-        # one, so history stays compact and re-usable as plain memory.
-        if body.conversation_id:
-            try:
-                await msg_repo.ensure_conversation(
-                    body.conversation_id,
-                    str(current_user.id),
-                    kb_id=body.kb_id,
-                    title=body.message[:512],
-                )
-                await msg_repo.add(body.conversation_id, "user", body.message)
-                await msg_repo.add(
-                    body.conversation_id, "assistant", reply, sources=sources or None
-                )
-            except Exception:
-                pass
-
-        # Usage tracking (Usage page) — token counts are real (tiktoken),
-        # cost is a static-table estimate since OpenRouter doesn't return
-        # billing info on this SSE streaming path. Best-effort: never let a
-        # tracking failure break the chat response, which has already been
-        # sent in full by this point.
-        try:
-            model_used = body.model or "openai/gpt-4o-mini"
-            prompt_tokens = count_tokens(system_prompt) + count_tokens(user_msg)
-            completion_tokens = count_tokens(reply)
-            await UsageRepository().record(
-                user_id=str(current_user.id),
-                model=model_used,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                cost_usd=estimate_cost_usd(model_used, prompt_tokens, completion_tokens),
-                duration_ms=int((time.perf_counter() - t0) * 1000),
-            )
-        except Exception:
-            pass
+        # one, so history stays compact and re-usable as plain memory. The
+        # sources are stored in NORMALIZED form, so reopening the conversation
+        # renders the same regions it showed live (rule §8.9).
+        await _persist(msg_repo, body, current_user, reply, wire_sources)
+        await _record_usage(current_user, body, system_prompt, reply, t0, user_msg)
 
     return StreamingResponse(generate(), media_type="text/event-stream", headers=SSE_HEADERS)
+
+
+async def _persist(msg_repo, body, current_user, reply: str, sources: list[dict]) -> None:
+    """Best-effort write of the turn. The reply has already been delivered in
+    full by the time this runs, so a failure here must never surface."""
+    if not body.conversation_id:
+        return
+    try:
+        await msg_repo.ensure_conversation(
+            body.conversation_id,
+            str(current_user.id),
+            kb_id=body.kb_id,
+            title=body.message[:512],
+        )
+        await msg_repo.add(body.conversation_id, "user", body.message)
+        await msg_repo.add(body.conversation_id, "assistant", reply, sources=sources or None)
+    except Exception:
+        pass
+
+
+async def _record_usage(current_user, body, system_prompt: str, reply: str, t0, prompt_text=None):
+    """Usage tracking — token counts are real (tiktoken), cost is a static-table
+    estimate since OpenRouter returns no billing info on the SSE path."""
+    try:
+        model_used = body.model or settings.openrouter_chat_model
+        prompt_tokens = count_tokens(system_prompt) + count_tokens(prompt_text or body.message)
+        completion_tokens = count_tokens(reply)
+        await UsageRepository().record(
+            user_id=str(current_user.id),
+            model=model_used,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cost_usd=estimate_cost_usd(model_used, prompt_tokens, completion_tokens),
+            duration_ms=int((time.perf_counter() - t0) * 1000),
+        )
+    except Exception:
+        pass
 
 
 @router.get("/history/{conversation_id}", response_model=ConversationHistoryResponse)

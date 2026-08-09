@@ -22,13 +22,13 @@ _enc = tiktoken.get_encoding("cl100k_base")
 MAX_EMBED_TOKENS = 8000
 
 # The RETRIEVAL cap, which is a different question from the one above. 8.000
-# is the largest chunk the embeddings API accepts; 3.000 is the largest chunk
-# that is still USEFUL to retrieve. A price appendix table runs to thousands
-# of rows, and a top-k window that spends one of its 5 slots on such a table
-# is carrying mostly rows nobody asked about.
+# is the largest chunk the embeddings API accepts; the retrieval cap is the
+# largest chunk still USEFUL to retrieve — a top-k window that spends one of
+# its 5 slots on a thousand-row table is carrying mostly rows nobody asked
+# about.
 #
-# Measured on the project corpus (scripts/eval_chunk_cap.py), asking how many
-# of the 242 known CADIVI prices land inside a top-5 window:
+# 3.000 is the default, from scripts/eval_chunk_cap.py, asking how many of 242
+# known CADIVI prices land inside a top-5 window:
 #
 #     cap      chunks    coverage@5    header overhead
 #     none      1.333      51/242            0%
@@ -36,11 +36,20 @@ MAX_EMBED_TOKENS = 8000
 #     1500      2.411      41/242          +11%
 #      800      4.769      18/242          +22%
 #
-# Coverage peaks at 3.000 and then FALLS: below it, each piece carries too
-# few rows for k of them to add up, the repeated header eats a fifth of the
-# budget, and same-table pieces embed so alike that ranking cannot separate
-# them (cosine >=0.98 for 24,8% of same-table pairs at 800 vs 13,2% at
-# 3.000 — scripts/eval_intra_table_sim.py). See docs/bao-cao-benchmark.md.
+# SCOPE OF THAT MEASUREMENT — read this before quoting the table above.
+# It was run over documents where tables are INCIDENTAL: prose with a small or
+# medium table embedded in it, which is what most of the corpus looks like.
+# For those it still holds, and it is why STANDARD keeps 3.000: below it each
+# piece carries too few rows for k of them to add up, the repeated header eats
+# a fifth of the budget, and same-table pieces embed so alike that ranking
+# cannot separate them (cosine >=0.98 for 24,8% of same-table pairs at 800 vs
+# 13,2% at 3.000 — scripts/eval_intra_table_sim.py).
+#
+# It does NOT generalize to documents that are table from cover to cover. The
+# later 500-question study (scripts/eval_final_500.py) measured that case
+# separately and landed on 1.500 with table context off — see
+# app/core/chunking/profiles.py, which is where the two live side by side.
+# The cap is therefore a PARAMETER of enforce_chunk_caps, not a global.
 MAX_TABLE_CHUNK_TOKENS = 3000
 
 _TABLE_ROW_RE = re.compile(r"<tr>.*?</tr>", re.DOTALL)
@@ -117,7 +126,12 @@ def split_oversized_table_chunk(chunk: Chunk, max_tokens: int = MAX_EMBED_TOKENS
     return result
 
 
-def enforce_chunk_caps(chunks: list[Chunk], doc_id: str, logger) -> list[Chunk]:
+def enforce_chunk_caps(
+    chunks: list[Chunk],
+    doc_id: str,
+    logger,
+    table_cap_tokens: int = MAX_TABLE_CHUNK_TOKENS,
+) -> list[Chunk]:
     """Apply the retrieval cap to table chunks, then the hard embedding cap.
 
     Two passes, because they fail differently. The first is about retrieval
@@ -126,14 +140,18 @@ def enforce_chunk_caps(chunks: list[Chunk], doc_id: str, logger) -> list[Chunk]:
     over MAX_EMBED_TOKENS after splitting is not a table we can cut — a TEXT
     chunk, or a table whose single row is enormous — and has to be dropped,
     because one oversized item fails the whole embeddings request.
+
+    `table_cap_tokens` comes from the document's ChunkProfile (3.000 for
+    ordinary documents, 1.500 for table-heavy ones). The MAX_EMBED_TOKENS pass
+    is NOT configurable — that one is the API's limit, not a tuning choice.
     """
-    over_cap = [c for c in chunks if embed_token_count(c) > MAX_TABLE_CHUNK_TOKENS]
+    over_cap = [c for c in chunks if embed_token_count(c) > table_cap_tokens]
     if not over_cap:
         return chunks
 
     expanded: list[Chunk] = []
     for c in chunks:
-        expanded.extend(split_oversized_table_chunk(c, MAX_TABLE_CHUNK_TOKENS))
+        expanded.extend(split_oversized_table_chunk(c, table_cap_tokens))
 
     dropped = [c for c in expanded if embed_token_count(c) > MAX_EMBED_TOKENS]
     if dropped:
@@ -150,7 +168,7 @@ def enforce_chunk_caps(chunks: list[Chunk], doc_id: str, logger) -> list[Chunk]:
         "doc_id=%s: split %d chunk(s) over the %d-token retrieval cap -> %d chunks total",
         doc_id,
         len(over_cap),
-        MAX_TABLE_CHUNK_TOKENS,
+        table_cap_tokens,
         len(expanded),
     )
     return expanded

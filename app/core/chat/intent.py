@@ -257,6 +257,8 @@ _REGION_KEYWORDS: list[tuple[str, list[str]]] = [
     ("HN", ["hà nội", "ha noi", " hn "]),
     ("DN", ["đà nẵng", "da nang", " dn "]),
     ("HCM", ["tphcm", "tp hcm", "hồ chí minh", "ho chi minh", "sài gòn", "sai gon", " hcm "]),
+    ("KH", ["khánh hoà", "khánh hòa", "khanh hoa", "nha trang", " kh "]),
+    ("AG", ["an giang", "long xuyên", "long xuyen", "rạch giá", "rach gia", "phú quốc", "phu quoc", " ag "]),
 ]
 
 

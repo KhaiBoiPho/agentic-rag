@@ -13,6 +13,7 @@ from app.core.chunking.base import (
     enforce_chunk_caps,
 )
 from app.core.chunking.dispatcher import ChunkDispatcher
+from app.core.chunking.profiles import profile_from_config
 from app.core.llm.openrouter import OpenRouterClient
 from app.db.postgres.repositories.document_repo import DocumentRepository
 from app.db.qdrant.client import QdrantStore
@@ -40,9 +41,10 @@ class IngestionPipeline:
 
         t0 = time.perf_counter()
 
-        chunk_token_num = config.get("chunk_token_num", 512)
-        overlap_pct = config.get("chunk_overlap_pct", 15)
-        table_ctx = config.get("table_context_size", 128)
+        # The profile the upload endpoint resolved from the KB's
+        # `table_heavy_chunking` flag, rebuilt from the job payload — so a job
+        # queued before the flag was toggled is chunked the way it was queued.
+        profile = profile_from_config(config)
 
         # 1. Register document in PostgreSQL
         doc = await self._doc_repo.create(kb_id=kb_id, user_id=user_id, filename=filename)
@@ -54,9 +56,9 @@ class IngestionPipeline:
         # 2. Chunk
         try:
             dispatcher = ChunkDispatcher(
-                chunk_token_num=chunk_token_num,
-                overlap_percent=overlap_pct,
-                table_context_size=table_ctx,
+                chunk_token_num=profile.text_token_num,
+                overlap_percent=profile.overlap_percent,
+                table_context_size=profile.table_context_size,
             )
             chunks = dispatcher.chunk(
                 filename=filename,
@@ -79,13 +81,25 @@ class IngestionPipeline:
                     filename,
                     doc_id,
                     kb_id,
-                    chunk_token_num=chunk_token_num,
-                    overlap_percent=overlap_pct,
+                    chunk_token_num=profile.text_token_num,
+                    overlap_percent=profile.overlap_percent,
+                    table_context_size=profile.table_context_size,
                 )
             except Exception as exc:
                 logger.warning("OCR fallback failed doc_id=%s file=%s: %s", doc_id, filename, exc)
 
-        chunks = enforce_chunk_caps(chunks, doc_id, logger)
+        chunks = enforce_chunk_caps(
+            chunks, doc_id, logger, table_cap_tokens=profile.table_cap_tokens
+        )
+        logger.info(
+            "doc_id=%s: chunk profile=%s (text=%d, ctx=%d, table_cap=%d) -> %d chunks",
+            doc_id,
+            profile.name,
+            profile.text_token_num,
+            profile.table_context_size,
+            profile.table_cap_tokens,
+            len(chunks),
+        )
 
         total = len(chunks)
         yield {"stage": "chunking", "progress": 0.3, "chunks_total": total, "done": False}

@@ -20,6 +20,10 @@ export default function KbDetail({ params }: { params: Promise<{ id: string }> }
   // Which pipeline an upload runs is the KB's own setting now, not a
   // hard-coded id — see knowledge_bases.price_extraction (migration 0008).
   const priceMode = !!kb?.price_extraction;
+  // And how it is CUT UP is a second, independent setting — see
+  // knowledge_bases.table_heavy_chunking (migration 0010) and
+  // app/core/chunking/profiles.py.
+  const tableHeavy = !!kb?.table_heavy_chunking;
 
   const STATUS_LABEL: Record<string, string> = {
     pending: t.kb.statusPending,
@@ -68,11 +72,14 @@ export default function KbDetail({ params }: { params: Promise<{ id: string }> }
     }
   }, [docs, load]);
 
-  async function togglePriceExtraction(enabled: boolean) {
+  // PATCH sends ONLY the field being changed — the endpoint treats an absent
+  // field as "leave alone", so toggling one setting can't clobber the other
+  // with a stale value read at page load.
+  async function toggleFlag(patch: Record<string, boolean>) {
     setToggling(true);
     setErr(null);
     try {
-      await api.patch(`/api/v1/kb/${id}`, { price_extraction: enabled });
+      await api.patch(`/api/v1/kb/${id}`, patch);
       await loadKbs();
     } catch {
       setErr(t.kb.toggleFailed);
@@ -153,13 +160,44 @@ export default function KbDetail({ params }: { params: Promise<{ id: string }> }
                 type="checkbox"
                 checked={priceMode}
                 disabled={toggling}
-                onChange={(e) => togglePriceExtraction(e.target.checked)}
+                onChange={(e) => toggleFlag({ price_extraction: e.target.checked })}
                 style={{ width: 16, height: 16, accentColor: "var(--brand)", cursor: "pointer" }}
               />
               <strong style={{ fontSize: "var(--fs-sm)" }}>{t.kb.priceExtraction}</strong>
               {toggling && <span className="spinner" style={{ width: 13, height: 13 }} />}
             </label>
             <p className="sub" style={{ margin: "8px 0 0 25px" }}>{t.kb.priceExtractionHint}</p>
+
+            {/* Independent of the flag above: this one decides how documents
+                are CUT UP, not whether prices are parsed out of them. */}
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 9,
+                cursor: "pointer",
+                marginTop: 18,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={tableHeavy}
+                disabled={toggling}
+                onChange={(e) => toggleFlag({ table_heavy_chunking: e.target.checked })}
+                style={{ width: 16, height: 16, accentColor: "var(--brand)", cursor: "pointer" }}
+              />
+              <strong style={{ fontSize: "var(--fs-sm)" }}>{t.kb.tableHeavy}</strong>
+            </label>
+            <p className="sub" style={{ margin: "8px 0 0 25px" }}>{t.kb.tableHeavyHint}</p>
+            {tableHeavy && (
+              <p className="sub" style={{ margin: "8px 0 0 25px" }}>{t.kb.tableHeavyActive}</p>
+            )}
+            {/* Changing a profile does not re-chunk what is already stored —
+                say so, because "I turned it on and nothing changed" is the
+                obvious next question. */}
+            <p className="sub" style={{ margin: "8px 0 0 25px", opacity: 0.75 }}>
+              {t.kb.chunkProfileNote}
+            </p>
 
             {priceMode && (
               <p className="sub" style={{ margin: "14px 0 0 25px" }}>{t.kb.priceUploadNote}</p>

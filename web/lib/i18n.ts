@@ -84,6 +84,13 @@ const vi = {
     agenticHint: "Hỏi đáp trên mọi kho tri thức của hệ thống, kèm tra giá vật liệu và dự toán chi phí.",
     placeholderAgentic: "Hỏi bất cứ điều gì — tra giá, dự toán, tra cứu tài liệu…",
     badgePlain: "Chat thường — không dùng RAG",
+    // Provenance badges — driven by which kinds of source actually back the
+    // answer, not by whether a knowledge base happened to be selected.
+    badgeTool: "Tra cứu dữ liệu",
+    badgeToolRag: "Tool + RAG",
+    // Shown on a citation that carries no region of its own. Never replaced
+    // with the region of the question.
+    sourceNoRegion: "Không gắn vùng",
     badgeVoice: "Giọng nói",
     voiceMsgSent: "Đã gửi bằng giọng nói",
     sourcesLabel: "Nguồn",
@@ -161,6 +168,15 @@ const vi = {
     priceExtractionOn: "Đang bật trích xuất giá",
     priceExtractionOff: "Đang tắt trích xuất giá",
     priceBadge: "Giá vật liệu",
+    // Chunking profile (knowledge_bases.table_heavy_chunking, migration 0010).
+    tableHeavy: "Chế độ tài liệu nhiều bảng",
+    tableHeavyHint:
+      "Bật cho phụ lục giá / bảng dài nhiều trang: cắt bảng ở 1.500 token thay vì 3.000, và KHÔNG ghép văn xuôi xung quanh vào chunk bảng — vì ở tài liệu toàn bảng, phần \u201cxung quanh\u201d thường chỉ là header trang hoặc hàng của bảng khác. Tài liệu thường (văn xuôi có bảng nhỏ xen kẽ) nên để TẮT.",
+    tableHeavyActive:
+      "Đang dùng cấu hình theo benchmark: trần chunk 1.500 token, tắt ghép ngữ cảnh bảng, giữ HTML bảng và lặp header. Model trả lời không đổi.",
+    tableHeavyBadge: "Nhiều bảng",
+    chunkProfileNote:
+      "Đổi thiết lập chỉ ảnh hưởng tài liệu tải lên SAU đó. Tài liệu đã nạp giữ nguyên cách chia cũ cho tới khi bạn tải lại.",
     priceRowCount: "{n} dòng giá",
     priceRowNone: "0 dòng giá",
     priceRowNoneHint: "Đã quét nhưng không đọc được bảng giá nào trong tài liệu này",
@@ -349,6 +365,9 @@ const en = {
     agenticHint: "Ask across every knowledge base in the system, with material-price lookup and cost estimates.",
     placeholderAgentic: "Ask anything — prices, estimates, documents…",
     badgePlain: "Plain chat — no RAG",
+    badgeTool: "Data lookup",
+    badgeToolRag: "Tool + RAG",
+    sourceNoRegion: "No region",
     badgeVoice: "Voice",
     voiceMsgSent: "Sent by voice",
     sourcesLabel: "Sources",
@@ -426,6 +445,14 @@ const en = {
     priceExtractionOn: "Price extraction is on",
     priceExtractionOff: "Price extraction is off",
     priceBadge: "Material prices",
+    tableHeavy: "Table-heavy document mode",
+    tableHeavyHint:
+      "Turn on for price appendices / long multi-page tables: splits tables at 1,500 tokens instead of 3,000 and does NOT glue surrounding prose onto table chunks — on an all-table page the \u201csurroundings\u201d are usually a page header or another table\u2019s rows. Leave OFF for ordinary documents (prose with small tables in it).",
+    tableHeavyActive:
+      "Using the benchmark configuration: 1,500-token chunk cap, table context off, HTML tables with repeated headers. The answering model is unchanged.",
+    tableHeavyBadge: "Table-heavy",
+    chunkProfileNote:
+      "Changing this only affects documents uploaded AFTER the change. Already-ingested documents keep their existing chunking until you re-upload them.",
     priceRowCount: "{n} price rows",
     priceRowNone: "0 price rows",
     priceRowNoneHint: "Scanned, but no readable price table was found in this document",

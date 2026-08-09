@@ -16,6 +16,7 @@ continuation page would be emitted as the header row. See _resolve_header().
 
 from __future__ import annotations
 
+import re
 from io import BytesIO
 
 import fitz  # PyMuPDF
@@ -28,7 +29,7 @@ from app.core.chunking.base import (
     naive_merge_with_origins,
 )
 from app.core.chunking.models import Chunk, ChunkType
-from app.core.chunking.table_extract import extract_tables_resolved
+from app.core.chunking.table_extract import extract_tables_resolved, repair_spaced_number
 
 # A text block whose centre lies inside a table's bbox is table content that
 # PyMuPDF reported as loose text. The margin absorbs the small disagreement
@@ -194,14 +195,22 @@ class PdfChunker(BaseChunker):
         return result, bboxes
 
     def _table_to_html(self, header: list[str] | None, body: list[list[str]]) -> str:
+        """Render lưới đã giải ô gộp thành HTML, có sửa số bị lỗi font.
+
+        Sửa số ở đây là bắt buộc chứ không phải làm đẹp: cùng một ô giá đang
+        đi ra hai đường dưới hai dạng khác nhau — `material_prices` lưu 12180
+        (vì `_parse_price` đã nối lại) trong khi chunk đem embed giữ nguyên
+        chuỗi hỏng "1 2.180". Model đọc chunk vì thế không đọc ra được con số,
+        và mọi phép đo dựa trên khớp chuỗi cũng tưởng dòng đó biến mất.
+        """
         if not header and not body:
             return ""
         html = ["<table>"]
         if header:
-            cells = "".join(f"<th>{c.strip()}</th>" for c in header)
+            cells = "".join(f"<th>{repair_spaced_number(c.strip())}</th>" for c in header)
             html.append(f"<tr>{cells}</tr>")
         for row in body:
-            cells = "".join(f"<td>{c.strip()}</td>" for c in row)
+            cells = "".join(f"<td>{repair_spaced_number(c.strip())}</td>" for c in row)
             html.append(f"<tr>{cells}</tr>")
         html.append("</table>")
         return "\n".join(html)
@@ -270,14 +279,86 @@ def _looks_like_header(row: list[str]) -> bool:
     non_empty = [c for c in cells if c]
     if len(non_empty) < 2:
         return False
-    if any(len(c) > _MAX_HEADER_CELL_LEN for c in non_empty):
+    # Ô bị trộn chữ không được phép tước tư cách tiêu đề của cả hàng: nó dài
+    # bất thường nên luôn vượt _MAX_HEADER_CELL_LEN, và bảng công bố giá vì thế
+    # bị bỏ tiêu đề hoàn toàn — hàng nhãn bị đẩy xuống thành hàng dữ liệu.
+    readable = [c for c in non_empty if not _scrambled(c)]
+    if not readable:
+        return False
+    if any(len(c) > _MAX_HEADER_CELL_LEN for c in readable):
         return False
     # A cell that is purely a formatted number (e.g. "4.250.000") means this
     # is a data row, not a header.
     if any(c.replace(".", "").replace(",", "").isdigit() for c in non_empty):
         return False
-    lowered = [c.lower() for c in non_empty]
+    lowered = [c.lower() for c in readable]
     return any(label in cell for cell in lowered for label in _HEADER_LABELS)
+
+
+_COL_NUM_RE = re.compile(r"^\[?\(?\d+\)?\]?$")
+
+
+def _is_number_cell(cell: str) -> bool:
+    return bool(cell) and cell.replace(".", "").replace(",", "").isdigit()
+
+
+def _scrambled(cell: str) -> bool:
+    """Ô tiêu đề bị pdfplumber rải xen kẽ chữ giữa các cột kề nhau.
+
+    Khi tiêu đề có ô gộp trải trên nhiều cột con, phần chữ xuống dòng của các
+    cột đó nằm cùng một dải toạ độ, và pdfplumber trả về chúng đan vào nhau:
+
+        "Điều kiện thương mại"  ->  "t Đ hư iề ơ u n g k i m ện ạ i"
+
+    Dấu hiệu ổn định là tỉ lệ token một ký tự cao bất thường — tiếng Việt viết
+    bình thường hầu như không sinh ra chuỗi như vậy.
+    """
+    toks = cell.split()
+    if len(toks) < 4:
+        return False
+    return sum(1 for t in toks if len(t) == 1) / len(toks) > 0.3
+
+
+def _merge_header_rows(top: list[str], sub: list[str]) -> list[str]:
+    """Ghép tiêu đề hai tầng, bỏ ô bị trộn và ô đánh số cột.
+
+    Ở các cột bên trái, tầng hai thường chỉ lặp lại nhãn của tầng một; ghép
+    thẳng sẽ ra "Stt Stt". Nên bỏ qua phần đã có mặt trong chuỗi đang tích luỹ.
+    """
+    out = []
+    for i in range(max(len(top), len(sub))):
+        parts: list[str] = []
+        for row in (top, sub):
+            c = (row[i] if i < len(row) else "").strip()
+            if not c or _scrambled(c) or _COL_NUM_RE.match(c):
+                continue
+            if any(c in p or p in c for p in parts):
+                continue
+            parts.append(c)
+        out.append(" ".join(parts))
+    return out
+
+
+def _is_numbering_row(row: list[str]) -> bool:
+    """Hàng chỉ chứa số thứ tự cột — "[1] [2] [3]…" — không mang thông tin."""
+    cells = [c.strip() for c in row if c.strip()]
+    return len(cells) >= 3 and all(_COL_NUM_RE.match(c) for c in cells)
+
+
+def _has_usable_second_tier(top: list[str], sub: list[str]) -> bool:
+    """Tầng hai chỉ đáng ghép khi nó bù được nhãn mà tầng một thiếu hoặc hỏng.
+
+    Điều kiện này giữ cho bảng một tầng bình thường không bị đụng tới: nếu tầng
+    một đã đủ nhãn sạch thì hàm trả về False và luồng cũ chạy nguyên vẹn.
+    """
+    cells = [c.strip() for c in sub]
+    if len([c for c in cells if c]) < 2 or any(_is_number_cell(c) for c in cells):
+        return False
+    for i, cb in enumerate(cells):
+        ca = (top[i] if i < len(top) else "").strip()
+        if cb and not _scrambled(cb) and not _COL_NUM_RE.match(cb) and (not ca or _scrambled(ca)):
+            return True
+    return False
 
 
 def _resolve_header(
@@ -313,6 +394,13 @@ def _resolve_header(
         return prev_header, grid, prev_header, prev_ncol
 
     if _looks_like_header(first):
+        # Tiêu đề hai tầng: nhãn của các cột con nằm ở hàng thứ hai, và ở hàng
+        # đầu chính những cột đó lại là chuỗi bị trộn. Ghép hai tầng mới lấy
+        # lại được nhãn — với bảng công bố giá, đó là ba cột khu vực KV 1/2/3.
+        if rest and _has_usable_second_tier(first, rest[0]):
+            merged = _merge_header_rows(first, rest[0])
+            body = [r for r in rest[1:] if not _is_numbering_row(r)]
+            return merged, body, merged, ncol
         return first, rest, first, ncol
 
     return None, grid, prev_header, prev_ncol

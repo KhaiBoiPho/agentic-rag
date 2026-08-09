@@ -1,0 +1,4 @@
+config_id,index_name,chunk_limit,chunk_count,avg_chunk_tokens,embedding_model,source_count,created_at
+T1500,T1500,1500,2252,831.106,text-embedding-3-small,11,2026-08-06T10:56:32.405938+00:00
+T3000,T3000,3000,1476,1184.908,text-embedding-3-small,11,2026-08-06T08:58:06.898393+00:00
+R1500,R1500,1500,790,1102.124,text-embedding-3-small,11,2026-08-06T11:05:54.852876+00:00

@@ -1,12 +1,17 @@
-// There is no backend /models endpoint — this curated list is frontend-owned.
-// Verified-working OpenRouter ids grouped by relative price tier.
+// The curated PICKER list is frontend-owned (verified-working OpenRouter ids,
+// grouped by relative price tier). The DEFAULT is not: it belongs to the
+// backend, and `GET /api/v1/config/chat` is the authority. The constant below
+// mirrors `settings.openrouter_chat_model` so the first paint and any offline
+// case still show the right thing — keep the two in sync.
 
 export interface ModelTier {
   tier: "Budget" | "Standard" | "Premium";
   models: { id: string; label: string }[];
 }
 
-export const DEFAULT_MODEL = "openai/gpt-4o-mini";
+/** Mirrors app/config.py `openrouter_chat_model`. Overridden at runtime by
+ *  /api/v1/config/chat — see lib/store.ts `syncBackendConfig`. */
+export const DEFAULT_MODEL = "google/gemini-2.5-flash";
 
 export const MODEL_TIERS: ModelTier[] = [
   {

@@ -75,7 +75,12 @@ class OpenRouterClient:
         temperature: float = 0.3,
         max_tokens: int = 4096,
     ) -> str:
-        model = model or settings.openrouter_research_model
+        # Falls back to the PRODUCTION chat model, not the research one. Every
+        # caller that wants something else (research graph, classifier, cost
+        # disambiguator) already passes `model=` explicitly; the ones that
+        # don't are chat paths, and they were silently landing on a research
+        # model id OpenRouter no longer serves.
+        model = model or settings.openrouter_chat_model
         resp = await self._client.chat.completions.create(
             model=model,
             messages=messages,
@@ -100,7 +105,7 @@ class OpenRouterClient:
         function.arguments}) vs `.content` — kept separate from `chat()`
         (which always returns plain text) so existing callers are untouched.
         """
-        model = model or settings.openrouter_research_model
+        model = model or settings.openrouter_chat_model
         resp = await self._client.chat.completions.create(
             model=model,
             messages=messages,
@@ -129,13 +134,14 @@ class OpenRouterClient:
         except Exception as exc:
             logger.error(
                 "Embedding failed (model=%s): %s — check OPENROUTER_EMBED_MODEL in .env. "
-                "Supported models: openai/text-embedding-3-small, openai/text-embedding-3-large",
+                "Supported models: voyageai/voyage-4-large, openai/text-embedding-3-small, "
+                "openai/text-embedding-3-large",
                 settings.openrouter_embed_model,
                 exc,
             )
             raise ValueError(
                 f"Embedding model '{settings.openrouter_embed_model}' not supported. "
-                "Set OPENROUTER_EMBED_MODEL=openai/text-embedding-3-small in .env"
+                "Set OPENROUTER_EMBED_MODEL=voyageai/voyage-4-large in .env"
             ) from exc
 
     async def embed_batch(

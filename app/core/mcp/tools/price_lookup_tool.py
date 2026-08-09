@@ -13,7 +13,7 @@ PRICE_LOOKUP_TOOL = Tool(
     name="lookup_material_price",
     description=(
         "Tra cứu vật liệu xây dựng trong dữ liệu giá đã công bố và báo giá nhà cung cấp, "
-        "theo vùng (HN|DN|HCM). Trả về tên vật liệu, đơn giá, đơn vị, quy cách, "
+        "theo vùng (HN|DN|HCM|KH|AG). Trả về tên vật liệu, đơn giá, đơn vị, quy cách, "
         "nhà sản xuất, kỳ công bố và cơ sở giá (tại mỏ / tại chân công trình).\n"
         "DÙNG CÔNG CỤ NÀY CHO CẢ HAI LOẠI CÂU HỎI:\n"
         "  1. Hỏi GIÁ — 'giá xi măng PCB40 bao nhiêu' → truyền material_name.\n"
@@ -29,9 +29,9 @@ PRICE_LOOKUP_TOOL = Tool(
         "properties": {
             "region": {
                 "type": "string",
-                "enum": ["HN", "DN", "HCM"],
+                "enum": ["HN", "DN", "HCM", "KH", "AG"],
                 "description": (
-                    "Vùng giá: Hà Nội | Đà Nẵng | TPHCM. BỎ TRỐNG nếu câu hỏi không nêu "
+                    "Vùng giá: Hà Nội | Đà Nẵng | TPHCM | Khánh Hoà | An Giang. BỎ TRỐNG nếu câu hỏi không nêu "
                     "vùng — khi đó công cụ tra cả 3 vùng và ghi rõ vùng ở từng dòng. "
                     "ĐỪNG đoán vùng."
                 ),

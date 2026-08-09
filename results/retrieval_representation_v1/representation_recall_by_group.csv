@@ -1,0 +1,7 @@
+index_name,scope,n,recall_at_1,recall_at_3,recall_at_5,recall_at_10,mrr,median_first_hit_rank,no_hit_at_10
+T1500_HTML,price,252,107,166,189,210,0.563489,1.0,42
+T1500_HTML,attribute,248,100,141,154,184,0.504208,1.0,64
+T1500_KV,price,252,76,138,159,192,0.444643,2.0,60
+T1500_KV,attribute,248,88,125,147,164,0.448149,1.0,84
+T1500_VERB,price,252,36,75,89,114,0.236629,2.0,138
+T1500_VERB,attribute,248,74,109,129,141,0.383705,1.0,107

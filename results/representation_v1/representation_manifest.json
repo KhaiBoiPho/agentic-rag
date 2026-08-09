@@ -1,0 +1,39 @@
+{
+  "experiment_version": "representation_v1",
+  "models": {
+    "oss20b": {
+      "model_id": "openai/gpt-oss-20b",
+      "provider": "CoreWeave"
+    },
+    "gemma12b": {
+      "model_id": "google/gemma-3-12b-it",
+      "provider": "DeepInfra"
+    },
+    "llama31_8b": {
+      "model_id": "meta-llama/llama-3.1-8b-instruct",
+      "provider": "DeepInfra"
+    },
+    "gemma4b": {
+      "model_id": "google/gemma-3-4b-it",
+      "provider": "DeepInfra"
+    }
+  },
+  "arms": [
+    "T1500_HTML",
+    "T1500_KV",
+    "T1500_VERB",
+    "R1500_RECURSIVE"
+  ],
+  "query_count": 500,
+  "price_count": 252,
+  "attribute_count": 248,
+  "temperature": 0,
+  "max_tokens": 2000,
+  "top_k": 5,
+  "tools": [],
+  "retrieval": "dense identity_v2 fixed top-5",
+  "cut_policy": "is_correct=0; included in denominator",
+  "raw_cache_count": 8000,
+  "representation_samples": "representation_samples.md",
+  "created_at": "2026-08-07T00:00:00Z"
+}

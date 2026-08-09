@@ -79,6 +79,18 @@ class KnowledgeBase(Base):
     price_extraction: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )
+    # Which ChunkProfile uploads into this KB use (app/core/chunking/profiles.py).
+    # False -> STANDARD (prose with incidental tables: cap 3.000, table context
+    # on). True -> TABLE_HEAVY (price appendices that are table from cover to
+    # cover: cap 1.500, table context off).
+    #
+    # Independent of `price_extraction` on purpose. That flag decides whether
+    # rows are ALSO parsed into material_prices; this one decides how the
+    # document is cut for retrieval. A KB can want either without the other —
+    # a long spec table needs the tighter cap but has no prices in it.
+    table_heavy_chunking: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now
@@ -182,7 +194,7 @@ class MaterialPrice(Base):
         UUID(as_uuid=True), ForeignKey("knowledge_bases.id"), index=True
     )
 
-    region: Mapped[str] = mapped_column(String(8), index=True)  # HN | DN | HCM
+    region: Mapped[str] = mapped_column(String(8), index=True)  # HN | DN | HCM | KH
     material_category: Mapped[str] = mapped_column(String(128), index=True)
     material_name: Mapped[str] = mapped_column(String(512), index=True)
     spec: Mapped[str | None] = mapped_column(String(512), nullable=True)  # quy cách

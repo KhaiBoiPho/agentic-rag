@@ -15,13 +15,17 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const loadKbs = useStore((s) => s.loadKbs);
   const loadProjects = useStore((s) => s.loadProjects);
+  const syncBackendConfig = useStore((s) => s.syncBackendConfig);
 
   // load shared data once; collapse by default on small screens
   useEffect(() => {
     if (window.innerWidth < 820) setCollapsed(true);
     loadKbs().catch(() => {});
     loadProjects().catch(() => {});
-  }, [loadKbs, loadProjects]);
+    // Best-effort: the bundled DEFAULT_MODEL constant already mirrors the
+    // backend, so a failure here just leaves that in place.
+    syncBackendConfig().catch(() => {});
+  }, [loadKbs, loadProjects, syncBackendConfig]);
 
   return (
     <Ctx.Provider value={{ toggleSidebar: () => setCollapsed((c) => !c), collapsed }}>

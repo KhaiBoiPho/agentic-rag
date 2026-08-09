@@ -39,6 +39,7 @@ class KnowledgeBaseRepository:
         name: str,
         description: str = "",
         price_extraction: bool = False,
+        table_heavy_chunking: bool = False,
     ) -> KnowledgeBase:
         async with get_session() as s:
             kb = KnowledgeBase(
@@ -46,26 +47,44 @@ class KnowledgeBaseRepository:
                 name=name,
                 description=description,
                 price_extraction=price_extraction,
+                table_heavy_chunking=table_heavy_chunking,
             )
             s.add(kb)
             await s.flush()
             await s.refresh(kb)
             return kb
 
-    async def set_price_extraction(self, kb_id: str, enabled: bool) -> KnowledgeBase | None:
-        """Toggle price extraction. Deliberately NOT ownership-scoped: the 4
-        system KBs have no per-user owner but must stay configurable from the
-        UI, and this only changes how future uploads are processed — it
-        neither reads nor destroys anything (unlike delete, which stays
-        owner-scoped and blocked for system KBs)."""
+    async def set_ingest_flags(
+        self,
+        kb_id: str,
+        price_extraction: bool | None = None,
+        table_heavy_chunking: bool | None = None,
+    ) -> KnowledgeBase | None:
+        """Toggle the per-KB ingestion settings. `None` means "leave alone", so
+        the caller can PATCH one flag without having to send the other's
+        current value back (and without racing another tab that just changed
+        it).
+
+        Deliberately NOT ownership-scoped: the 4 system KBs have no per-user
+        owner but must stay configurable from the UI, and this only changes how
+        FUTURE uploads are processed — it neither reads nor destroys anything
+        (unlike delete, which stays owner-scoped and blocked for system KBs).
+        """
         async with get_session() as s:
             kb = await s.get(KnowledgeBase, uuid.UUID(kb_id))
             if not kb:
                 return None
-            kb.price_extraction = enabled
+            if price_extraction is not None:
+                kb.price_extraction = price_extraction
+            if table_heavy_chunking is not None:
+                kb.table_heavy_chunking = table_heavy_chunking
             await s.flush()
             await s.refresh(kb)
             return kb
+
+    async def set_price_extraction(self, kb_id: str, enabled: bool) -> KnowledgeBase | None:
+        """Back-compat shim for callers that predate `set_ingest_flags`."""
+        return await self.set_ingest_flags(kb_id, price_extraction=enabled)
 
     async def get(self, kb_id: str, user_id: str) -> KnowledgeBase | None:
         async with get_session() as s:

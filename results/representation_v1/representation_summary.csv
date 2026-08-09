@@ -1,0 +1,17 @@
+model_key,model_id,provider,arm,em,em_pct,price_correct,price_pct,attribute_correct,attribute_pct,empty,cut,input_tokens_avg,output_tokens_avg,latency_ms_avg,estimated_cost_total
+oss20b,openai/gpt-oss-20b,CoreWeave,T1500_HTML,240,48.0,156,61.9,84,33.87,15,15,5065.23,374.24,4183.19,0.10030424
+oss20b,openai/gpt-oss-20b,CoreWeave,T1500_KV,243,48.6,149,59.13,94,37.9,21,21,7818.74,416.77,4370.56,0.14437099
+oss20b,openai/gpt-oss-20b,CoreWeave,T1500_VERB,231,46.2,144,57.14,87,35.08,38,38,8220.23,504.28,4748.55,0.15608197
+oss20b,openai/gpt-oss-20b,CoreWeave,R1500_RECURSIVE,214,42.8,150,59.52,64,25.81,33,33,4790.12,470.48,4033.34,0.10243307
+gemma12b,google/gemma-3-12b-it,DeepInfra,T1500_HTML,293,58.6,159,63.1,134,54.03,0,0,4136.46,9.36,1229.27,0.1041133
+gemma12b,google/gemma-3-12b-it,DeepInfra,T1500_KV,285,57.0,153,60.71,132,53.23,0,0,8035.52,9.59,1689.29,0.20160685
+gemma12b,google/gemma-3-12b-it,DeepInfra,T1500_VERB,288,57.6,157,62.3,131,52.82,0,0,8480.48,9.59,1834.53,0.212731
+gemma12b,google/gemma-3-12b-it,DeepInfra,R1500_RECURSIVE,251,50.2,158,62.7,93,37.5,0,0,5784.65,9.39,1607.88,0.1453206
+llama31_8b,meta-llama/llama-3.1-8b-instruct,DeepInfra,T1500_HTML,210,42.0,91,36.11,119,47.98,0,0,4930.42,7.82,1355.94,0.04946056
+llama31_8b,meta-llama/llama-3.1-8b-instruct,DeepInfra,T1500_KV,231,46.2,110,43.65,121,48.79,0,0,7784.32,8.94,1789.4,0.0780219
+llama31_8b,meta-llama/llama-3.1-8b-instruct,DeepInfra,T1500_VERB,226,45.2,107,42.46,119,47.98,0,1,8185.78,13.07,2087.94,0.08211924
+llama31_8b,meta-llama/llama-3.1-8b-instruct,DeepInfra,R1500_RECURSIVE,204,40.8,112,44.44,92,37.1,0,0,4657.07,8.66,1632.54,0.04674386
+gemma4b,google/gemma-3-4b-it,DeepInfra,T1500_HTML,235,47.0,119,47.22,116,46.77,0,0,4136.46,9.8,2279.22,0.1039018
+gemma4b,google/gemma-3-4b-it,DeepInfra,T1500_KV,174,34.8,78,30.95,96,38.71,0,0,8035.52,8.9,3211.96,0.2013328
+gemma4b,google/gemma-3-4b-it,DeepInfra,T1500_VERB,165,33.0,85,33.73,80,32.26,0,0,8480.48,8.43,2861.14,0.2124335
+gemma4b,google/gemma-3-4b-it,DeepInfra,R1500_RECURSIVE,183,36.6,102,40.48,81,32.66,0,0,5784.65,9.76,1626.65,0.14510445

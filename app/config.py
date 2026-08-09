@@ -55,9 +55,33 @@ class Settings(BaseSettings):
     # ─── OpenRouter ──────────────────────────────────────────────────────────
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_chat_model: str = "anthropic/claude-3.5-sonnet"
-    openrouter_embed_model: str = "openai/text-embedding-3-small"
-    openrouter_research_model: str = "google/gemini-2.0-flash-exp:free"
+    # PRODUCTION CHAT MODEL. Every chat turn that does not carry an explicit
+    # `model` in the request resolves to this — the RAG stream, the price
+    # presenter, the cost presenter and the agent tool loop all default here,
+    # so there is exactly one place to change it.
+    #
+    # Gemini 2.5 Flash via OpenRouter, chosen for this workload rather than in
+    # the abstract: it is already the model this repo measured as best-in-class
+    # on the OCR table pass (see openrouter_vision_table_model below — 15/15
+    # prices correct on the Vicem Hà Tiên scan, matching Opus at a tenth of the
+    # cost), it supports tool calling, and its context window comfortably holds
+    # a multi-region price fact sheet plus supporting chunks.
+    #
+    # NOT a benchmark model. The GPT-OSS and other ids that appear under
+    # scripts/ and results/ are historical evaluation artefacts and are
+    # deliberately left alone — a benchmark rerun with a different model is a
+    # different experiment, not a config update.
+    openrouter_chat_model: str = "google/gemini-2.5-flash"
+    # voyage-4-large over text-embedding-3-small: scripts/bench_agentic.py's
+    # grid (base vs voy configs) measured it as the stronger embedding on this
+    # corpus. 1024-dim, not 1536 — see embed_dim below. Changing this without
+    # also recreating the Qdrant collection and re-ingesting leaves stored
+    # 1536-dim vectors that a 1024-dim query can never match.
+    openrouter_embed_model: str = "voyageai/voyage-4-large"
+    # Deep Research only (app/core/research/graph.py). Kept separate from the
+    # chat model on purpose: the research graph is a different workload with
+    # its own cost profile, and its nodes pass `model=` explicitly anyway.
+    openrouter_research_model: str = "google/gemini-2.5-flash"
     # Cheap/fast model for the off-topic classifier (app/core/chat/topic_guard.py)
     # — deliberately independent of openrouter_chat_model / the user's selected
     # model, so an off-topic question gets intercepted before ever reaching
@@ -133,7 +157,30 @@ class Settings(BaseSettings):
 
     # ─── Embedding ───────────────────────────────────────────────────────────
     embed_batch_size: int = 32
-    embed_dim: int = 1536
+    embed_dim: int = 1024
+
+    # ─── Hybrid retrieval (dense + BM25, fused with RRF) ─────────────────────
+    # BM25's document-length normalisation needs a corpus average, and it has
+    # to be fixed at INDEX time (the stored weight already has it baked in), so
+    # it cannot be recomputed as the corpus grows without re-indexing. A
+    # constant is standard practice — FastEmbed ships one too.
+    #
+    # 600 is an estimate for this corpus, not a measurement: prose chunks
+    # target 512 tiktoken tokens and table chunks run to the 1.500/3.000 cap,
+    # while BM25 counts its own (stopword-filtered, accent-stripped) tokens,
+    # which is a different unit. `scripts/backfill_sparse_vectors.py` reports
+    # the TRUE average over the live collection — run it and set this to what
+    # it prints for correctly normalised scores.
+    #
+    # Getting it wrong is a soft failure, not a broken one: b=0,75 means the
+    # penalty depends on len/avg_len, so a uniformly wrong average biases long
+    # and short documents in opposite directions rather than breaking ranking.
+    bm25_avg_doc_len: float = 600.0
+    # BM25 may reorder and extend what dense retrieval found, but not answer on
+    # its own — see QdrantStore.search. Set false to reproduce the benchmark's
+    # ungated fusion exactly (and to accept that a lexically-similar off-topic
+    # question can surface citations).
+    hybrid_require_dense_support: bool = True
 
     # ─── Monitoring ──────────────────────────────────────────────────────────
     prometheus_enabled: bool = True

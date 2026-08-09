@@ -58,7 +58,7 @@ COST_TOOL = Tool(
                 "type": "number",
                 "description": "Tổng diện tích sàn xây dựng (m2), đã gồm các tầng",
             },
-            "region": {"type": "string", "enum": ["HN", "DN", "HCM"]},
+            "region": {"type": "string", "enum": ["HN", "DN", "HCM", "KH", "AG"]},
             "project_type": {
                 "type": "string",
                 "enum": list(PROJECT_TYPES.keys()),
@@ -85,27 +85,11 @@ COST_TOOL = Tool(
     },
 )
 
-# Hệ số tiêu hao tham khảo trên 1 m2 sàn xây dựng — nhà thấp tầng, kết cấu
-# BTCT thông thường. Đây là con số THAM KHẢO cho cấp độ "ý tưởng" (mục 4.1),
-# không thay cho bóc tách theo bộ phận khi đã có mặt bằng/mặt cắt.
-_PER_M2_COEFFICIENTS = {
-    "be_tong_m3_per_m2": 0.35,
-    "thep_kg_per_m2": 25.0,
-    "tuong_m2_per_m2_san": 1.0,  # diện tích tường xây ước theo diện tích sàn
-    "son_m2_per_m2_san": 2.2,
-}
-_COEFFICIENT_LABELS = {
-    "be_tong_m3_per_m2": "Bê tông thương phẩm",
-    "thep_kg_per_m2": "Thép xây dựng",
-    "tuong_m2_per_m2_san": "Tường xây",
-    "son_m2_per_m2_san": "Sơn (trước hệ số hoàn thiện)",
-}
-_COEFFICIENT_UNITS = {
-    "be_tong_m3_per_m2": "m3/m2 sàn",
-    "thep_kg_per_m2": "kg/m2 sàn",
-    "tuong_m2_per_m2_san": "m2 tường/m2 sàn",
-    "son_m2_per_m2_san": "m2/m2 sàn",
-}
+# Hệ số tiêu hao KHÔNG khai báo ở đây. Chúng thuộc về từng loại hình công
+# trình (`PROJECT_TYPES[...].coefficients` trong project_types.py), vì một bộ
+# hệ số chung không phục vụ được cả nhà phố lẫn nhà xưởng thép tiền chế.
+# `_compute_cost` đọc thẳng từ đó — xem vòng lặp `for slug, per_m2 in
+# project.coefficients.items()`.
 
 _FINISH_MULTIPLIER = {"tho": 1.0, "hoan_thien_co_ban": 1.0, "hoan_thien_cao_cap": 1.15}
 _FINISH_LABELS = {
@@ -284,6 +268,13 @@ async def _compute_cost(args: dict) -> dict:
     area = args["floor_area_m2"]
     region = args["region"]
     finish_level = args.get("finish_level", "hoan_thien_co_ban")
+    # OFF in production (§10). The web fallback is an exploratory-estimate
+    # feature, not a price source: when the vetted DB has no row, the honest
+    # output is "no data for this line item", and the caller decides whether an
+    # unverified web number is acceptable for their purpose. The code path is
+    # kept intact and merely gated — see search_web_price's own docstring for
+    # why a web price is never blended with published prices.
+    allow_web_fallback = bool(args.get("allow_web_fallback", False))
     if area <= 0:
         return {"error": "floor_area_m2 phải > 0"}
 
@@ -370,10 +361,20 @@ async def _compute_cost(args: dict) -> dict:
                 "_document_id": str(candidates[idx].document_id),
             }
 
-        # Not in the vetted price DB for this region — fall back to a web
-        # search rather than immediately reporting "missing". Always cited
-        # with a clickable [n] source and flagged as unverified in the
-        # output text; never silently blended with DB-backed confidence.
+        # Not in the vetted price DB for this region. In production this is
+        # where the line item is reported as missing and the total is withheld
+        # (fail-closed, §10) — the web search only runs when the caller has
+        # explicitly opted in, and even then the figure is cited as unverified.
+        if not allow_web_fallback:
+            return {
+                "item": label,
+                "qty": qty,
+                "unit": unit,
+                "unit_price": None,
+                "subtotal": None,
+                "via_web": False,
+                "_missing": True,
+            }
         web_price, url, title = await search_web_price(target_desc, region)
         if web_price is not None and not (spec.price_min <= web_price <= spec.price_max):
             # A scraped number outside the plausible band is a unit mix-up,
@@ -486,7 +487,7 @@ async def _fetch_source_docs(document_ids: list[str]) -> tuple[list[dict], str |
     async with get_session() as s:
         rows = (
             await s.execute(
-                select(Document.filename, KnowledgeBase.name)
+                select(Document.id, Document.filename, KnowledgeBase.name)
                 .join(KnowledgeBase, Document.kb_id == KnowledgeBase.id)
                 .where(Document.id.in_([_uuid.UUID(d) for d in uniq]))
             )
@@ -495,11 +496,21 @@ async def _fetch_source_docs(document_ids: list[str]) -> tuple[list[dict], str |
     seen: set[str] = set()
     sources: list[dict] = []
     kb_name: str | None = None
-    for filename, kbname in rows:
+    for doc_id, filename, kbname in rows:
         kb_name = kb_name or kbname
         if filename not in seen:
             seen.add(filename)
-            sources.append({"chunk_id": filename, "document_name": filename, "score": 1.0})
+            # `document_id` is additive — the caller needs it to build a
+            # normalized AnswerSource (region comes from the priced rows, not
+            # from this filename). The three legacy keys stay for old clients.
+            sources.append(
+                {
+                    "chunk_id": filename,
+                    "document_name": filename,
+                    "score": 1.0,
+                    "document_id": str(doc_id),
+                }
+            )
     return sources, kb_name
 
 

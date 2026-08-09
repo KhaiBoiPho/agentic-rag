@@ -10,6 +10,10 @@ import logging
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
 from mcp.types import CallToolResult, ListToolsResult
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Mount, Route
 
 from app.core.mcp.tools.cost_tool import COST_TOOL, handle_calculate_construction_cost
 from app.core.mcp.tools.price_lookup_tool import PRICE_LOOKUP_TOOL, handle_lookup_material_price
@@ -55,12 +59,34 @@ async def call_tool(name: str, arguments: dict) -> CallToolResult:
         )
 
 
-def get_mcp_app():
-    """Return an ASGI app for MCP SSE transport — mount at /mcp in FastAPI."""
-    transport = SseServerTransport("/mcp/messages")
+def get_mcp_app() -> Starlette:
+    """ASGI app for the MCP SSE transport — mounted at /mcp by app/main.py.
 
-    async def handle_sse(scope, receive, send):
-        async with transport.connect_sse(scope, receive, send) as streams:
+    SSE transport is two endpoints, not one, and this used to return only the
+    first: the server streams events over GET /mcp/sse, and the client posts
+    its requests back to the URL named in the transport's constructor. Handing
+    out the stream handler alone produced a server a client could connect to
+    and then never talk to, so both routes are wired here.
+
+    The POST path passed to `SseServerTransport` must be absolute from the
+    application root (`/mcp/...`, matching the mount point), because it is
+    what gets advertised to the client — a mount-relative path would send it
+    to the wrong place.
+    """
+    transport = SseServerTransport("/mcp/messages/")
+
+    async def handle_sse(request: Request) -> Response:
+        async with transport.connect_sse(
+            request.scope, request.receive, request._send
+        ) as streams:
             await _server.run(streams[0], streams[1], _server.create_initialization_options())
+        # The stream is finished by the time this returns; Starlette still
+        # wants a response object for the route to be well-formed.
+        return Response()
 
-    return handle_sse
+    return Starlette(
+        routes=[
+            Route("/sse", endpoint=handle_sse),
+            Mount("/messages/", app=transport.handle_post_message),
+        ]
+    )

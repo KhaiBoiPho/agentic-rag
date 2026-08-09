@@ -68,6 +68,15 @@ def create_app() -> FastAPI:
     # All other API routes under /api
     app.include_router(api_router, prefix="/api")
 
+    # MCP server (SSE) — the six construction/RAG tools, exposed for external
+    # MCP clients. Three of them (rag_query, web_search, deep_research) are
+    # deliberately NOT given to the chat agent (see llm/tool_loop.py), so this
+    # mount is the only way anything reaches them; without it they were
+    # unreachable code.
+    from app.core.mcp.server import get_mcp_app
+
+    app.mount("/mcp", get_mcp_app())
+
     @app.on_event("startup")
     async def on_startup():
         logger.info("startup", env=settings.app_env)

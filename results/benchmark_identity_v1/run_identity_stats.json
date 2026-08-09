@@ -1,0 +1,206 @@
+{
+  "T1500": {
+    "index_name": "T1500",
+    "chunk_limit": 1500,
+    "chunk_count": 2252,
+    "min_chunk_tokens": 1,
+    "median_chunk_tokens": 994.5,
+    "mean_chunk_tokens": 831.1056838365897,
+    "p90_chunk_tokens": 1311.0,
+    "max_chunk_tokens": 1463,
+    "number_of_table_chunks": 1903,
+    "number_of_source_documents": 11,
+    "vector_cache": ".bench_cache/emb_openai_text-embedding-3-small_identity_v2_f500_T1500_2252_d1b2432da5bd.json",
+    "input_text_digest": "d1b2432da5bd",
+    "cache_digest": "d1b2432da5bd",
+    "cache_digest_matches": true,
+    "samples": [
+      {
+        "chunk_id": "T1500-0010",
+        "has_header": true,
+        "token_count": 1016,
+        "over_1500": false,
+        "metadata": {},
+        "metadata_chunk_limit": null,
+        "metadata_has_chunk_limit": false,
+        "filename": "HaNoi_PhuLuc.pdf"
+      },
+      {
+        "chunk_id": "T1500-0493",
+        "has_header": true,
+        "token_count": 1272,
+        "over_1500": false,
+        "metadata": {},
+        "metadata_chunk_limit": null,
+        "metadata_has_chunk_limit": false,
+        "filename": "HaNoi_PhuLuc.pdf"
+      },
+      {
+        "chunk_id": "T1500-0969",
+        "has_header": true,
+        "token_count": 780,
+        "over_1500": false,
+        "metadata": {},
+        "metadata_chunk_limit": null,
+        "metadata_has_chunk_limit": false,
+        "filename": "HaNoi_PhuLuc.pdf"
+      },
+      {
+        "chunk_id": "T1500-1514",
+        "has_header": true,
+        "token_count": 1165,
+        "over_1500": false,
+        "metadata": {},
+        "metadata_chunk_limit": null,
+        "metadata_has_chunk_limit": false,
+        "filename": "DaNang_PhuLuc1.pdf"
+      },
+      {
+        "chunk_id": "T1500-2250",
+        "has_header": false,
+        "token_count": 30,
+        "over_1500": false,
+        "metadata": {},
+        "metadata_chunk_limit": null,
+        "metadata_has_chunk_limit": false,
+        "filename": "QCVN 16-2023.pdf"
+      }
+    ]
+  },
+  "T3000": {
+    "index_name": "T3000",
+    "chunk_limit": 3000,
+    "chunk_count": 1476,
+    "min_chunk_tokens": 1,
+    "median_chunk_tokens": 937.0,
+    "mean_chunk_tokens": 1184.9078590785907,
+    "p90_chunk_tokens": 2653.0,
+    "max_chunk_tokens": 2869,
+    "number_of_table_chunks": 1127,
+    "number_of_source_documents": 11,
+    "vector_cache": ".bench_cache/emb_openai_text-embedding-3-small_f500_T_1476_63041242e2af.json",
+    "input_text_digest": "63041242e2af",
+    "cache_digest": "63041242e2af",
+    "cache_digest_matches": true,
+    "samples": [
+      {
+        "chunk_id": "T3000-0010",
+        "has_header": true,
+        "token_count": 1016,
+        "over_1500": false,
+        "metadata": {},
+        "metadata_chunk_limit": null,
+        "metadata_has_chunk_limit": false,
+        "filename": "HaNoi_PhuLuc.pdf"
+      },
+      {
+        "chunk_id": "T3000-0299",
+        "has_header": true,
+        "token_count": 2797,
+        "over_1500": true,
+        "metadata": {},
+        "metadata_chunk_limit": null,
+        "metadata_has_chunk_limit": false,
+        "filename": "HaNoi_PhuLuc.pdf"
+      },
+      {
+        "chunk_id": "T3000-0581",
+        "has_header": true,
+        "token_count": 916,
+        "over_1500": false,
+        "metadata": {},
+        "metadata_chunk_limit": null,
+        "metadata_has_chunk_limit": false,
+        "filename": "HaNoi_PhuLuc.pdf"
+      },
+      {
+        "chunk_id": "T3000-0898",
+        "has_header": true,
+        "token_count": 1227,
+        "over_1500": false,
+        "metadata": {},
+        "metadata_chunk_limit": null,
+        "metadata_has_chunk_limit": false,
+        "filename": "DaNang_PhuLuc1.pdf"
+      },
+      {
+        "chunk_id": "T3000-1474",
+        "has_header": false,
+        "token_count": 30,
+        "over_1500": false,
+        "metadata": {},
+        "metadata_chunk_limit": null,
+        "metadata_has_chunk_limit": false,
+        "filename": "QCVN 16-2023.pdf"
+      }
+    ]
+  },
+  "R1500": {
+    "index_name": "R1500",
+    "chunk_limit": 1500,
+    "chunk_count": 790,
+    "min_chunk_tokens": 254,
+    "median_chunk_tokens": 1155.0,
+    "mean_chunk_tokens": 1102.1240506329113,
+    "p90_chunk_tokens": 1431.1,
+    "max_chunk_tokens": 1497,
+    "number_of_table_chunks": 0,
+    "number_of_source_documents": 11,
+    "vector_cache": ".bench_cache/emb_openai_text-embedding-3-small_identity_v2_f500_R1500_790_8970df914cad.json",
+    "input_text_digest": "8970df914cad",
+    "cache_digest": "8970df914cad",
+    "cache_digest_matches": true,
+    "samples": [
+      {
+        "chunk_id": "R1500-0000",
+        "has_header": false,
+        "token_count": 1253,
+        "over_1500": false,
+        "metadata": {},
+        "metadata_chunk_limit": null,
+        "metadata_has_chunk_limit": false,
+        "filename": ""
+      },
+      {
+        "chunk_id": "R1500-0197",
+        "has_header": false,
+        "token_count": 1059,
+        "over_1500": false,
+        "metadata": {},
+        "metadata_chunk_limit": null,
+        "metadata_has_chunk_limit": false,
+        "filename": ""
+      },
+      {
+        "chunk_id": "R1500-0394",
+        "has_header": false,
+        "token_count": 1407,
+        "over_1500": false,
+        "metadata": {},
+        "metadata_chunk_limit": null,
+        "metadata_has_chunk_limit": false,
+        "filename": ""
+      },
+      {
+        "chunk_id": "R1500-0591",
+        "has_header": false,
+        "token_count": 998,
+        "over_1500": false,
+        "metadata": {},
+        "metadata_chunk_limit": null,
+        "metadata_has_chunk_limit": false,
+        "filename": ""
+      },
+      {
+        "chunk_id": "R1500-0789",
+        "has_header": false,
+        "token_count": 344,
+        "over_1500": false,
+        "metadata": {},
+        "metadata_chunk_limit": null,
+        "metadata_has_chunk_limit": false,
+        "filename": ""
+      }
+    ]
+  }
+}

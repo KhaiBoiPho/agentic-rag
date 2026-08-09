@@ -87,6 +87,19 @@ _PRICE_GENERIC_KEYWORDS = [
     # column header in some annexes instead of "giá bán"/"đơn giá".
     "giá quý",
     "gia quy",
+    # Khánh Hoà (3329/SXD-KTVLXD) heads its price columns by ZONE — "Vùng II",
+    # "Vùng III", "Vùng IV" — with no occurrence of "giá" anywhere in the header
+    # row. Without this the whole annex is skipped silently: _extract_header()
+    # returns None when no price column is found, so the document yields zero
+    # rows and the SQL tool has nothing to answer from. Measured: 0 of 4013 data
+    # rows recovered before this entry was added.
+    #
+    # Matching the first zone column means the extracted price is the Vùng II
+    # figure. That is correct for the 95% of rows priced identically across
+    # zones, and WRONG for the 5% that differ — those need a zone-aware schema,
+    # which this single-price-column extractor cannot express.
+    "vùng ii",
+    "vung ii",
 ]
 
 
@@ -269,6 +282,71 @@ def _detect_header(table: list[list[str | None]]) -> tuple[int, _ColumnMapping] 
 
 
 _ORDINAL_RE = re.compile(r"^\d{1,3}$")
+
+
+_UNIT_TOKENS = {
+    "kg", "tấn", "tan", "m", "m2", "m3", "m²", "m³", "md", "cây", "cay", "bao",
+    "viên", "vien", "cái", "cai", "bộ", "bo", "tấm", "tam", "thùng", "thung",
+    "lít", "lit", "hộp", "hop", "cuộn", "cuon", "biển", "bien", "ống", "ong",
+}
+
+
+def _infer_mapping_from_data(rows: list[list[str | None]]) -> _ColumnMapping | None:
+    """Suy ánh xạ cột từ NỘI DUNG khi bảng không có hàng tiêu đề.
+
+    Vì sao cần: bộ trích xuất chỉ mượn được ánh xạ của bảng trước khi SỐ CỘT
+    trùng nhau — đúng và an toàn, nhưng pdfplumber cắt lưới khác nhau giữa các
+    trang của cùng một bảng. Ở công bố giá Khánh Hoà, cùng một bảng ra 17 cột ở
+    trang đầu, 14 cột ở trang sau, và có trang bị tách làm đôi. Kết quả: 16 trên
+    4.013 hàng được nhận, phần còn lại bị bỏ im lặng.
+
+    Ba cột suy được từ dữ liệu mà không cần nhãn:
+
+        giá   ô khớp định dạng tiền ở phần lớn hàng, lấy cột PHẢI NHẤT
+        đơn vị ô là một từ đơn nằm trong tập đơn vị đo quen thuộc
+        tên   cột có văn bản dài nhất, và phải nằm TRƯỚC cột đơn vị
+
+    Chỉ dùng khi cả _detect_header lẫn phép mượn đều thất bại, và chỉ nhận khi
+    tìm đủ ba cột — thiếu một cột thì bỏ bảng như cũ, vì đoán nửa vời sẽ ghi dữ
+    liệu sai vào kho thay vì báo thiếu.
+    """
+    if len(rows) < 3:
+        return None
+    width = max(len(r) for r in rows)
+    money = [0] * width
+    unit = [0] * width
+    text = [0] * width
+    for r in rows:
+        for i in range(min(len(r), width)):
+            c = (r[i] or "").strip()
+            if not c:
+                continue
+            if _parse_price(c) is not None and len(re.sub(r"\D", "", c)) >= 4:
+                money[i] += 1
+            elif len(c.split()) == 1 and c.lower() in _UNIT_TOKENS:
+                unit[i] += 1
+            elif len(c) >= 8:
+                text[i] += 1
+
+    n = len(rows)
+    price_cols = [i for i in range(width) if money[i] >= n * 0.4]
+    unit_cols = [i for i in range(width) if unit[i] >= n * 0.3]
+    if not price_cols or not unit_cols:
+        return None
+    price_col = price_cols[-1] if len(price_cols) == 1 else price_cols[0]
+    unit_col = unit_cols[0]
+    cand = [i for i in range(unit_col) if text[i] >= n * 0.3]
+    if not cand:
+        return None
+    name_col = max(cand, key=lambda i: text[i])
+    return _ColumnMapping(
+        name_col=name_col,
+        unit_col=unit_col,
+        category_col=None,
+        price_site_col=None,
+        price_source_col=None,
+        price_generic_col=price_col,
+    )
 
 
 def _row_ordinal(cells: list[str]) -> int | None:
@@ -598,11 +676,19 @@ def extract_price_rows(
             data_rows = table[skip:]
             raw_data_rows = raw_table[skip:]
         else:
-            all_warnings.append(
-                f"{label}: Không nhận diện được header bảng "
-                "(thiếu cột tên vật liệu/đơn vị) — bỏ qua bảng."
-            )
-            continue
+            inferred = _infer_mapping_from_data(table)
+            if inferred is not None:
+                last_mapping = inferred
+                last_col_count = col_count
+                skip = 1 if _is_legend_row(table[0]) else 0
+                data_rows = table[skip:]
+                raw_data_rows = raw_table[skip:]
+            else:
+                all_warnings.append(
+                    f"{label}: Không nhận diện được header bảng "
+                    "(thiếu cột tên vật liệu/đơn vị) — bỏ qua bảng."
+                )
+                continue
 
         rows, warnings = _parse_data_rows(
             data_rows, last_mapping, state, raw_data_rows, assume_column_merges

@@ -172,3 +172,43 @@ def _resolve(grid: list[list[str | None]], rows, words: list[dict]) -> list[list
         resolved.append(out_row)
 
     return resolved
+
+
+# ─── Sửa số bị lỗi font ─────────────────────────────────────────────────────
+
+# pdfplumber thỉnh thoảng chèn khoảng trắng vào GIỮA một con số, do lỗi kerning
+# của PDF nguồn. `price_extractor._parse_price` đã sửa chuyện này cho đường
+# trích giá có cấu trúc, nhưng HTML đem đi embed thì KHÔNG — nên cùng một ô
+# xuất hiện dưới hai dạng khác nhau ở hai đường:
+#
+#     material_prices : 12180          (đã sửa)
+#     chunk HTML      : "1 2.180"      (nguyên trạng)
+#
+# Đo được trên corpus hiện tại: `DaNang_PhuLuc2.pdf` có 135/144 đơn giá ở dạng
+# hỏng, `DaNang_PhuLuc1.pdf` 158/2.573, `HaNoi_PhuLuc.pdf` 272/7.026. Hệ quả
+# không chỉ là khớp chuỗi trượt khi đo — chính MODEL đọc chunk cũng thấy
+# "1 2.180" và không đọc ra được 12.180.
+#
+# Bản sửa ở đây THẬN TRỌNG HƠN bản trong _parse_price, vì mục tiêu khác nhau:
+# _parse_price chỉ cần lấy con số đầu tiên của một ô giá, còn ở đây văn bản
+# được đưa nguyên cho model đọc nên không được làm hỏng ô khác. Cụ thể, phép
+# sửa "chữ số dẫn đầu" chỉ áp dụng khi phần sau khoảng trắng thực sự là một số
+# có dấu phân cách nghìn — nhờ vậy một ô khoảng giá trị như "25 30" được giữ
+# nguyên thay vì bị dính thành "2530".
+
+_SEP_GAP_RE = re.compile(r"(?<=\d)\s+(?=[.,]\d{3}(?!\d))")
+_LEAD_GAP_RE = re.compile(r"^(\d{1,2})\s+(?=\d[\d]*[.,]\d{3}(?!\d))")
+
+
+def repair_spaced_number(cell: str) -> str:
+    """Nối lại con số bị khoảng trắng lỗi font cắt đôi.
+
+        "7 .300"     -> "7.300"
+        "1.356 .481" -> "1.356.481"
+        "1 2.180"    -> "12.180"
+        "25 30"      -> "25 30"    (giữ nguyên: không có dấu phân cách nghìn)
+    """
+    if not cell or not any(c.isdigit() for c in cell):
+        return cell
+    fixed = _SEP_GAP_RE.sub("", cell)
+    return _LEAD_GAP_RE.sub(r"\1", fixed)

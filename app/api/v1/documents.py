@@ -6,8 +6,8 @@ from fastapi import APIRouter, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
 
 from app.api.deps import CurrentUser
-from app.config import settings
 from app.core.bootstrap.constants import is_system_kb
+from app.core.chunking.profiles import ChunkProfile, profile_for
 from app.queue.publisher import publish_ingest_job
 
 router = APIRouter()
@@ -21,11 +21,18 @@ class IngestJobResponse(BaseModel):
     status: str = "queued"
 
 
-async def _price_extraction_enabled(kb_id: str) -> bool:
+async def _kb_ingest_settings(kb_id: str) -> tuple[bool, ChunkProfile]:
+    """(runs price extraction?, which chunking profile) for this KB.
+
+    One lookup for both, because every upload needs both and they used to be
+    fetched — or in the price path's case, not fetched at all — separately.
+    """
     from app.db.postgres.repositories.kb_repo import KnowledgeBaseRepository
 
     kb = await KnowledgeBaseRepository().get_by_id(kb_id)
-    return bool(kb and kb.price_extraction)
+    if kb is None:
+        return False, profile_for(False)
+    return bool(kb.price_extraction), profile_for(bool(kb.table_heavy_chunking))
 
 
 @router.post("/upload/{kb_id}", response_model=IngestJobResponse, status_code=202)
@@ -33,11 +40,14 @@ async def upload_document(
     kb_id: str,
     file: UploadFile,
     current_user: CurrentUser,
-    region: str = Query(default="", description="HN | DN | HCM — bắt buộc nếu KB bật trích giá"),
+    region: str = Query(default="", description="HN | DN | HCM | KH — bắt buộc nếu KB bật trích giá"),
     price_period: str = Query(default="", description='Kỳ công bố, vd "2026-06"'),
+    # Per-upload overrides on top of the KB's profile. Left unset by the UI —
+    # they exist for one-off tuning and for the eval scripts.
     chunk_token_num: int = Query(default=None),
     chunk_overlap_pct: int = Query(default=None),
     table_context_size: int = Query(default=None),
+    table_cap_tokens: int = Query(default=None),
 ):
     """Normal upload. If the target KB has `price_extraction` on, this runs the
     price pipeline instead — the caller doesn't have to know which endpoint to
@@ -45,8 +55,18 @@ async def upload_document(
     if file.size and file.size > MAX_FILE_MB * 1024 * 1024:
         raise HTTPException(400, f"File exceeds {MAX_FILE_MB}MB limit")
 
-    if await _price_extraction_enabled(kb_id):
-        return await _publish_price_job(kb_id, file, current_user, region, price_period)
+    price_extraction, profile = await _kb_ingest_settings(kb_id)
+    profile = profile.with_overrides(
+        text_token_num=chunk_token_num,
+        overlap_percent=chunk_overlap_pct,
+        table_context_size=table_context_size,
+        table_cap_tokens=table_cap_tokens,
+    )
+
+    if price_extraction:
+        return await _publish_price_job(
+            kb_id, file, current_user, region, price_period, profile
+        )
 
     content = await file.read()
     job_id = await publish_ingest_job(
@@ -54,16 +74,12 @@ async def upload_document(
         user_id=str(current_user.id),
         filename=file.filename or "unknown",
         content=content,
-        config={
-            "chunk_token_num": chunk_token_num or settings.chunk_token_num,
-            "chunk_overlap_pct": chunk_overlap_pct or settings.chunk_overlap_percent,
-            "table_context_size": table_context_size or settings.table_context_size,
-        },
+        config=profile.to_config(),
     )
     return IngestJobResponse(job_id=job_id, filename=file.filename or "unknown")
 
 
-VALID_REGIONS = {"HN", "DN", "HCM"}
+VALID_REGIONS = {"HN", "DN", "HCM", "KH", "AG"}
 
 
 async def _publish_price_job(
@@ -72,6 +88,7 @@ async def _publish_price_job(
     current_user: CurrentUser,
     region: str,
     price_period: str,
+    profile: ChunkProfile | None = None,
 ) -> IngestJobResponse:
     """Region is mandatory for every price extraction, not just the published-
     price KB: `material_prices.region` is what both `lookup_material_price` and
@@ -83,7 +100,7 @@ async def _publish_price_job(
         raise HTTPException(
             400,
             "Kho tri thức này bật trích xuất giá vật liệu — cần chọn vùng giá "
-            "(HN | DN | HCM) khi tải tài liệu lên.",
+            "(HN | DN | HCM | KH) khi tải tài liệu lên.",
         )
     content = await file.read()
     job_id = await publish_ingest_job(
@@ -91,7 +108,15 @@ async def _publish_price_job(
         user_id=str(current_user.id),
         filename=file.filename or "unknown",
         content=content,
-        config={"region": region, "price_period": price_period},
+        # The chunk settings used to be omitted here, so a price KB always got
+        # the defaults no matter what — which meant the one corpus that most
+        # needed the table-heavy profile was the one corpus that could not be
+        # given it.
+        config={
+            "region": region,
+            "price_period": price_period,
+            **(profile or profile_for(False)).to_config(),
+        },
         mode="price_extraction",
     )
     return IngestJobResponse(job_id=job_id, filename=file.filename or "unknown")
@@ -133,7 +158,7 @@ async def upload_price_document(
     kb_id: str,
     file: UploadFile,
     current_user: CurrentUser,
-    region: str = Query(..., description="HN | DN | HCM"),
+    region: str = Query(..., description="HN | DN | HCM | KH"),
     price_period: str = Query(default="", description='Kỳ công bố, vd "2026-06"'),
 ):
     """Upload a price-announcement công văn/phụ lục or vendor-quote PDF: runs
@@ -147,7 +172,12 @@ async def upload_price_document(
     material_prices."""
     if file.size and file.size > MAX_FILE_MB * 1024 * 1024:
         raise HTTPException(400, f"File exceeds {MAX_FILE_MB}MB limit")
-    return await _publish_price_job(kb_id, file, current_user, region, price_period)
+    # Still honours the KB's chunking profile — this endpoint bypasses the
+    # `price_extraction` flag, not the chunking one.
+    _, profile = await _kb_ingest_settings(kb_id)
+    return await _publish_price_job(
+        kb_id, file, current_user, region, price_period, profile
+    )
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -66,10 +66,16 @@ async def run_tool_loop(
     llm: OpenRouterClient | None = None,
     model: str | None = None,
     max_rounds: int = 4,
+    allow_web_fallback: bool = False,
 ) -> tuple[str, list[dict]]:
     """Returns (final_content, tool_call_log). tool_call_log entries are
-    {name, arguments, result} — surfaced to the client as `sources`/debug
-    info so a tool-driven answer is distinguishable from a plain-RAG one."""
+    {name, arguments, result} — surfaced to the client as debug info so a
+    tool-driven answer is distinguishable from a plain-RAG one.
+
+    `allow_web_fallback` is threaded down to the cost tool rather than read
+    from global config there, so the decision belongs to the request (§10).
+    Default False: a missing official price is reported as missing, not
+    quietly filled in from a web search."""
     llm = llm or OpenRouterClient()
     conversation = list(messages)
     tool_call_log: list[dict] = []
@@ -108,6 +114,8 @@ async def run_tool_loop(
             else:
                 _, handler = entry
                 try:
+                    if name == "calculate_construction_cost":
+                        args = {**args, "allow_web_fallback": allow_web_fallback}
                     content = await handler(args)
                     result_text = "\n".join(c.text for c in content if hasattr(c, "text"))
                 except Exception as exc:
