@@ -390,7 +390,15 @@ def _row_ordinal(cells: list[str]) -> int | None:
 
 
 _ORG_RE = re.compile(
-    r"c[ôo]ng\s*ty|\bcty\b|\btnhh\b|\bcp\b|\bcổ\s*phần\b|t[ậa]p\s*đo[àa]n|nh[àa]\s*m[áa]y"
+    # \bc\.?\s*ty\b covers both "cty" and the period-abbreviated "C.ty" /
+    # "C. ty" seen throughout this corpus (NISHU, VAKOPEC, JOTON, and a
+    # dozen others) — missing the dotted form left `state.manufacturer`
+    # stuck on whatever the PREVIOUS section's manufacturer was, since a
+    # heading row with no manufacturer of its own relies on the data rows
+    # below it to supply one, and "C.ty sơn NISHU" silently failed to
+    # qualify (see git history for the NISHU-attributed-to-a-cement-company
+    # bug this caused).
+    r"c[ôo]ng\s*ty|\bc\.?\s*ty\b|\btnhh\b|\bcp\b|\bcổ\s*phần\b|t[ậa]p\s*đo[àa]n|nh[àa]\s*m[áa]y"
     r"|doanh\s*nghi[ệe]p|c[ơo]\s*s[ởo]\s|chi\s*nh[áa]nh|h[ợo]p\s*t[áa]c\s*x[ãa]|\bdntn\b",
     re.IGNORECASE,
 )
@@ -535,6 +543,20 @@ def _parse_data_rows(
         # family above it, so reading it as a data row would invent a priced
         # product that does not exist in the document.
         raw_non_empty = [c for c in raw_cells if c.strip()]
+        # spec_col/manufacturer_col are excluded from the sparseness count
+        # below (not from raw_non_empty itself, which heading_label still
+        # scans) — a heading row legitimately announces its technical
+        # standard AND its manufacturer alongside the category label (e.g.
+        # "Ống HDPE | TCDN 06:2003... | Cty CP Nhựa Đồng Nai"), and counting
+        # those as "surprise" extra cells pushed count to 3 and made the row
+        # fall through to be read as an ordinary (unit-less, priceless) data
+        # row — silently dropped by the `not unit` guard below, and with it
+        # the manufacturer that would have been captured a few lines down.
+        raw_sparse_count = sum(
+            1
+            for idx, c in enumerate(raw_cells)
+            if c.strip() and idx not in (spec_col, manufacturer_col)
+        )
         raw_unit = raw_cells[unit_col].strip() if unit_col < len(raw_cells) else ""
         raw_name = raw_cells[name_col].strip() if name_col < len(raw_cells) else ""
         raw_cat = (
@@ -547,7 +569,7 @@ def _parse_data_rows(
             for col in (price_source_col, price_site_col, price_generic_col)
         )
         heading_label = raw_cat or raw_name or next((c for c in raw_non_empty if _is_label(c)), "")
-        if raw_unit == "" and not raw_priced and len(raw_non_empty) <= 2 and heading_label:
+        if raw_unit == "" and not raw_priced and raw_sparse_count <= 2 and heading_label:
             state.category = heading_label
             state.heading_unclaimed = True
             # A vendor block announces its company on this same heading row
