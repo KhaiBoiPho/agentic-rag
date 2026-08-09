@@ -289,18 +289,34 @@ _DANGLING = {"ở", "tại", "của", "cho", "về", "và", "với", "là", "the
 # phrase, same boundary style as _QUESTION_PHRASES below.
 _MANUFACTURER_LEAD_RE = re.compile(
     r"\b(?:mỏ\s+đá|mỏ\s+cát|công\s*ty|cty|nhà\s*máy|doanh\s*nghiệp|hãng)\b"
-    r"(?:(?!\s+(?:ở|tại|của|cho|và|với|là|giá|bao\s+nhiêu)\b)[^?!.,;:\"'()])*",
+    r"(?:(?!\s+(?:ở|tại|của|cho|và|với|là|giá|bao\s+nhiêu|nào|gì)\b)[^?!.,;:\"'()])*",
     re.IGNORECASE,
 )
 
+# Bare lead phrases with nothing after them once _MANUFACTURER_LEAD_RE's
+# negative lookahead has trimmed the match — "công ty nào bán..." stops right
+# after "công ty" because "nào" is a stop word, leaving a match that names no
+# company at all.
+_MANUFACTURER_LEAD_BARE = {
+    "mỏ đá", "mỏ cát", "công ty", "cty", "nhà máy", "doanh nghiệp", "hãng",
+}
+
 
 def extract_manufacturer_query(message: str) -> str | None:
-    """The manufacturer/quarry phrase inside a price question, or None."""
+    """The manufacturer/quarry phrase inside a price question, or None.
+
+    Returns None rather than the lead phrase alone when nothing follows it —
+    "của công ty nào" is a question ABOUT the manufacturer (already covered
+    by _REQUEST_FIELD_KEYWORDS), not one naming a specific one, and treating
+    "công ty" as itself the manufacturer name filtered every real result out
+    of the lookup."""
     m = _MANUFACTURER_LEAD_RE.search(message)
     if not m:
         return None
     out = re.sub(r"\s+", " ", m.group(0)).strip()
-    return out or None
+    if not out or out.lower() in _MANUFACTURER_LEAD_BARE:
+        return None
+    return out
 
 
 def extract_material_query(message: str, regions: list[str] | None = None) -> str | None:
