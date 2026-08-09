@@ -145,10 +145,17 @@ app = create_app()
 
 
 if __name__ == "__main__":
+    import os
+
+    # Railway (and most PaaS hosts) inject PORT at deploy time and route the
+    # public domain to it, independent of whatever APP_PORT is set to — a
+    # container listening on APP_PORT while the platform proxies to PORT is
+    # reachable inside the private network but 502s on the public domain.
+    port = int(os.environ.get("PORT", settings.app_port))
     uvicorn.run(
         "app.main:app",
         host=settings.app_host,
-        port=settings.app_port,
+        port=port,
         reload=settings.app_debug,
         log_level="info",
     )
