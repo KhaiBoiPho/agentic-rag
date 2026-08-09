@@ -45,3 +45,8 @@ backups/*.tar.gz
 
 # Vector embedding cache cho benchmark (tái dùng giữa các lần chạy, rất nặng)
 .bench_cache/
+
+# Merged/converted STT models (local-gpu-stt/merge_lora.py output) — a few
+# GB each, machine-local, regenerated on demand from the HF repos.
+local-gpu-stt/*-merged/
+local-gpu-stt/*-ct2/

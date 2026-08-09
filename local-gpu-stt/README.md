@@ -46,6 +46,30 @@ First run downloads+converts the model (~3GB for large) into
 `~/.cache/huggingface` — subsequent runs are instant. Server listens on
 `:8001`. Sanity check: `curl http://localhost:8001/health`.
 
+### Using a LoRA fine-tune instead
+
+A LoRA adapter (e.g. a Hugging Face repo with `adapter_config.json` +
+`adapter_model.safetensors`, no full model weights) can't be loaded by
+faster-whisper/CTranslate2 directly — it has no concept of an adapter, only
+one merged set of weights. Merge it into its base model and convert to CT2
+once with `merge_lora.py` (edit `BASE_MODEL`/`ADAPTER` at the top for a
+different adapter):
+
+```bash
+pip install transformers peft accelerate
+pip install torch --index-url https://download.pytorch.org/whl/cpu  # CPU is enough, this is a weight merge, not inference
+python merge_lora.py
+```
+
+Produces `./phowhisper-medium-lora-ct2/`. Point `WHISPER_MODEL_SIZE` at its
+absolute path — no code change needed, `resolve_model_path()` passes any
+value it doesn't recognise as a `phowhisper-*` size straight through to
+faster-whisper's normal local-directory resolution:
+
+```bash
+WHISPER_MODEL_SIZE="$(pwd)/phowhisper-medium-lora-ct2" STT_SECRET=... python server.py
+```
+
 ## 3. Tunnel it out
 
 ```bash
