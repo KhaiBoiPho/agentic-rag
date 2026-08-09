@@ -279,6 +279,29 @@ _QUESTION_PHRASES = sorted(
 # Leftover connectives once the phrases above are gone.
 _DANGLING = {"ở", "tại", "của", "cho", "về", "và", "với", "là", "the", "có", "hỏi", "một", "1"}
 
+# A quarry/company phrase inside a price question ("mỏ đá Thanh Tâm", "công ty
+# Cadivi"). MaterialPriceRepository.lookup() matches `manufacturer` word by
+# word against exactly this kind of phrase — but only if it is ever passed
+# one. Left inside material_name instead, none of "mỏ"/"thanh"/"tâm" occur in
+# the actual product name column, so the all-words-must-match rule there
+# returns nothing even though the manufacturer alone would have found the
+# rows. Cut at the first connective/punctuation that plausibly ends the
+# phrase, same boundary style as _QUESTION_PHRASES below.
+_MANUFACTURER_LEAD_RE = re.compile(
+    r"\b(?:mỏ\s+đá|mỏ\s+cát|công\s*ty|cty|nhà\s*máy|doanh\s*nghiệp|hãng)\b"
+    r"(?:(?!\s+(?:ở|tại|của|cho|và|với|là|giá|bao\s+nhiêu)\b)[^?!.,;:\"'()])*",
+    re.IGNORECASE,
+)
+
+
+def extract_manufacturer_query(message: str) -> str | None:
+    """The manufacturer/quarry phrase inside a price question, or None."""
+    m = _MANUFACTURER_LEAD_RE.search(message)
+    if not m:
+        return None
+    out = re.sub(r"\s+", " ", m.group(0)).strip()
+    return out or None
+
 
 def extract_material_query(message: str, regions: list[str] | None = None) -> str | None:
     """The product phrase inside a price question, or None if there isn't one.
@@ -349,7 +372,16 @@ def route_by_rules(message: str) -> RouteDecision | None:
         # A price question that ALSO asks about VAT/scope/standards needs both
         # lanes: the tool owns the number, RAG owns the prose (§7).
         route = RequestRoute.MIXED if wants_document else RequestRoute.EXACT_STRUCTURED
-        material = extract_material_query(raw, regions)
+        manufacturer = extract_manufacturer_query(raw)
+        # Pulled out BEFORE material_name is computed, not after — left in,
+        # "mỏ"/"công ty"/etc. and the org name that follows would also count
+        # as material_name words, and the repository's all-words-must-match
+        # rule then demands them in the PRODUCT name column too, which they
+        # are never in.
+        material_source = (
+            _MANUFACTURER_LEAD_RE.sub(" ", raw, count=1) if manufacturer else raw
+        )
+        material = extract_material_query(material_source, regions)
         if not regions and route is RequestRoute.EXACT_STRUCTURED:
             # No region on a price question. Guessing one is how a Hà Nội
             # number ends up answering a TP.HCM question, so ask instead (§12.5).
@@ -358,6 +390,7 @@ def route_by_rules(message: str) -> RouteDecision | None:
                 intent="price_lookup",
                 regions=[],
                 material_name=material,
+                manufacturer=manufacturer,
                 requested_fields=fields,
                 missing_slots=["region"],
                 confidence=0.9,
@@ -367,6 +400,7 @@ def route_by_rules(message: str) -> RouteDecision | None:
             intent="price_lookup",
             regions=regions,
             material_name=material,
+            manufacturer=manufacturer,
             requested_fields=fields,
             missing_slots=[] if regions else ["region"],
             confidence=0.95,
