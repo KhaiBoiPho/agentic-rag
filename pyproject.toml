@@ -55,7 +55,9 @@ dependencies = [
     "aiofiles>=24.1.0",
 
     # MCP
-    "mcp>=1.1.0",
+    # <2.0: 2.0.0 (released 2026-08) dropped the @server.list_tools()/
+    # @server.call_tool() decorator API app/core/mcp/server.py relies on.
+    "mcp>=1.1.0,<2.0.0",
 
     # Monitoring
     "prometheus-client>=0.21.0",
