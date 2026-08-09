@@ -545,6 +545,24 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
             yield _sse(event)
             return
 
+        # ─── History as memory + slot normalization ─────────────────────────
+        # Both the router and retrieval need the STANDALONE form of the turn:
+        # "còn ở Đà Nẵng thì sao?" carries no material and no searchable terms
+        # on its own, so routing it would find no price question and retrieving
+        # it would embed noise. Condensing happens once, up front — before the
+        # off-topic guard too (see below) — and every downstream step (guard,
+        # router, region detection, retrieval) reads the same rewritten
+        # question, which is also why a follow-up now routes and cites the
+        # region it actually asks about (§12.14).
+        history: list[dict] = []
+        if body.conversation_id:
+            try:
+                history = await msg_repo.get_recent(body.conversation_id, limit=10)
+            except Exception:
+                history = []
+
+        resolved_query = await _retrieval_query(llm, body.message, history)
+
         # ─── Off-topic guard — cheap classifier before the (usually pricier)
         # main model/agent loop ────────────────────────────────────────────
         # Only in the default persona: once a KB/project or skill is active,
@@ -552,11 +570,17 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
         # specifically — see app/core/chat/topic_guard.py.
         # `all_kbs` is a knowledge-base scope just like kb_id/project_id, so the
         # same exemption applies: once documents are in scope, "on topic" is
-        # whatever they cover. Without this the guard saw follow-ups in
-        # isolation — "còn ở hồ chí minh" alone reads as off-topic — and
-        # refused mid-conversation about cable prices.
+        # whatever they cover.
+        # Checked against `resolved_query`, NOT `body.message` — a bare
+        # follow-up ("ở Hà Nội thì sao?", or the same thing mis-transcribed by
+        # voice) reads as off-topic in complete isolation, and this guard used
+        # to run before the condensing step above ever touched it. That was
+        # masked whenever a KB/Agentic scope happened to be active (the
+        # exemption below skipped the guard entirely), but the default
+        # persona — the common case for a plain voice turn — had no such
+        # protection and refused mid-conversation about steel/cable prices.
         if not body.kb_id and not body.project_id and not body.skill_id and not body.all_kbs:
-            if await is_off_topic(body.message, llm):
+            if await is_off_topic(resolved_query, llm):
                 reply = refusal_reply()
                 if body.conversation_id:
                     try:
@@ -574,22 +598,6 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
                 yield _sse({"type": "text", "delta": "", "done": True, "sources": []})
                 return
 
-        # ─── (4) History as memory + (5) slot normalization ────────────────
-        # Both the router and retrieval need the STANDALONE form of the turn:
-        # "còn ở Đà Nẵng thì sao?" carries no material and no searchable terms
-        # on its own, so routing it would find no price question and retrieving
-        # it would embed noise. Condensing happens once, up front, and every
-        # downstream step (router, region detection, retrieval) reads the same
-        # rewritten question — which is also why a follow-up now routes and
-        # cites the region it actually asks about (§12.14).
-        history: list[dict] = []
-        if body.conversation_id:
-            try:
-                history = await msg_repo.get_recent(body.conversation_id, limit=10)
-            except Exception:
-                history = []
-
-        resolved_query = await _retrieval_query(llm, body.message, history)
         kb_scope, scope_name = await _resolve_rag_scope(body, str(current_user.id))
 
         # ─── (6) Request Router — BEFORE retrieval, BEFORE the main LLM ────
