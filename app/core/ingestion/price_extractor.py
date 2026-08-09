@@ -52,11 +52,25 @@ _NAME_KEYWORDS = [
     "ten vat lieu",
     "loại vật liệu",
     "tên hàng",
-    "quy cách",
     "danh mục vật liệu",
     "danh mục giá vật liệu",
     "danh mục",
+    "thành phẩm",
+    "thanh pham",
 ]
+# Last-resort synonym for the name column — tried only when nothing in
+# _NAME_KEYWORDS matches any header cell. Some annexes have no distinct name
+# column and print the product name inside "Quy cách" instead, but others
+# have BOTH a genuine name column ("Thành phẩm vật liệu...") and their own
+# separate "Quy cách" (size) column. Matching "quy cách" as a same-priority
+# name keyword picked it over the real name column whenever it appeared
+# first in the header — every row's name became its size spec ("05 -
+# 20mm"), and the rows with no size (Quy cách blank, name embedded directly
+# in the product-name column instead, e.g. "Đá 1x2 (10-25)") were dropped
+# outright as "no name". Measured on HoChiMinh_..._PhuLuc1.pdf: 0 of the
+# first quarry group's 6 items ingested and 30+ others stored as size
+# strings instead of product names.
+_NAME_FALLBACK_KEYWORDS = ["quy cách", "quy cach"]
 _UNIT_KEYWORDS = ["đơn vị", "don vi", "đvt"]
 _CATEGORY_KEYWORDS = ["nhóm vật liệu", "nhom vat lieu"]
 # "Tiêu chuẩn kỹ thuật" / "Nhà sản xuất" are usually rendered as one cell
@@ -253,6 +267,18 @@ def _detect_header(table: list[list[str | None]]) -> tuple[int, _ColumnMapping] 
         price_generic_col = price_generic_col if price_generic_col is not None else pg
         spec_col = spec_col if spec_col is not None else sp
         manufacturer_col = manufacturer_col if manufacturer_col is not None else mf
+
+    # Only reached when nothing in the header row(s) matched _NAME_KEYWORDS —
+    # try the "Quy cách" synonym as a last resort, over the same rows already
+    # scanned for the header block. Doing this AFTER the loop (not folded
+    # into it) keeps a genuine name column from ever losing to "Quy cách"
+    # when both exist on the same header.
+    if header_idx is not None and name_col is None:
+        for raw_row in table[: header_idx + 1]:
+            fallback = _find_col([c or "" for c in raw_row], _NAME_FALLBACK_KEYWORDS)
+            if fallback is not None:
+                name_col = fallback
+                break
 
     if header_idx is None or name_col is None or unit_col is None:
         return None
@@ -531,6 +557,16 @@ def _parse_data_rows(
                 heading_mfr = _norm_ws(raw_cells[manufacturer_col])
                 if _looks_like_org(heading_mfr):
                     state.manufacturer = heading_mfr
+            elif _looks_like_org(heading_label):
+                # No dedicated manufacturer column, but the heading itself
+                # names one ("Mỏ đá Thanh Tâm của Công ty Cổ phần Thanh
+                # Tâm…") — capture it as manufacturer too, or it is lost
+                # entirely: the data rows below almost always carry their
+                # OWN populated category cell ("Đá xây dựng"), which always
+                # wins over state.category (see material_category below), so
+                # this heading would otherwise never be stored anywhere and
+                # the quarry/company becomes unfindable by any field.
+                state.manufacturer = _norm_ws(heading_label)
             continue
 
         if not name or not unit:

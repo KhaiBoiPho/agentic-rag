@@ -151,14 +151,44 @@ def _resolve(grid: list[list[str | None]], rows, words: list[dict]) -> list[list
         y_span = (row.bbox[1], row.bbox[3]) if row is not None else None
 
         out_row: list[str] = []
+        # Right edge of the most recent cell THIS ROW actually has (not
+        # `None`). A horizontal merge — one wide cell spanning several grid
+        # columns, e.g. a group-heading row ("Mỏ đá Thanh Tâm của Công ty…")
+        # — also reports every spanned column but the first as
+        # `covered_by_merge`, identically to a vertical (rowspan) merge. But
+        # its text already sits entirely in that first cell; treating the
+        # rest as holes and calling _recover_hole re-scans the SAME words by
+        # x-position and splits the one sentence across the following
+        # columns a second time. A geometric right-edge check tells the two
+        # apart: if the last real cell in this row already extends past
+        # where the next column starts, that column is inside the same
+        # colspan, not a hole or a vertical-merge continuation — leave it
+        # blank rather than recovering or inheriting into it.
+        prev_cell_x1: float | None = None
         for col_idx in range(ncol):
             text = (raw_row[col_idx] or "").strip() if col_idx < len(raw_row) else ""
-            covered_by_merge = col_idx < len(geom_cells) and geom_cells[col_idx] is None
+            cell_bbox = geom_cells[col_idx] if col_idx < len(geom_cells) else None
+            covered_by_merge = cell_bbox is None
+            span = spans[col_idx]
+
+            if not covered_by_merge:
+                prev_cell_x1 = cell_bbox[2]
+
+            colspan_continuation = (
+                covered_by_merge
+                and prev_cell_x1 is not None
+                and span is not None
+                and prev_cell_x1 > span[0]
+            )
+
+            if colspan_continuation:
+                out_row.append("")
+                continue
 
             if covered_by_merge:
                 # Look before inheriting: a real merged-cell body is empty,
                 # so anything found here is this row's own value.
-                own = _recover_hole(words, spans[col_idx], y_span)
+                own = _recover_hole(words, span, y_span)
                 if own:
                     out_row.append(own)
                     last[col_idx] = own
