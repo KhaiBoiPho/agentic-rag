@@ -247,14 +247,29 @@ async def _resolve_rag_scope(
 
 
 async def _retrieval_query(llm, message: str, history: list[dict]) -> str:
-    """Rewrite a short deictic follow-up into a standalone searchable question.
+    """Rewrite a follow-up into a standalone searchable question.
 
     "còn ở Đà Nẵng", "khu vực thành phố Hồ Chí Minh" carry almost no searchable
     terms on their own — embedding them retrieves noise and the model loses the
     thread, which showed up as "Plain chat — no RAG" on the very turns that
-    should have continued a price lookup. Falls back to prepending the previous
-    user turn when the rewrite is unavailable."""
-    if not history or len(message.split()) > 8:
+    should have continued a price lookup.
+
+    The word-count-only gate this used to have ("short -> condense, long ->
+    assume self-contained") was wrong for this domain: region is the single
+    most commonly omitted piece of context, and a user drops it in a fully-
+    formed 10+-word question just as often as in a 3-word one ("NISHU PRIMER
+    có mấy loại, giá mỗi loại bao nhiêu?" is a complete sentence that still
+    silently means "... ở Hà Nội, như câu trước"). Skipping condensing for it
+    lost the region already established earlier in the SAME conversation, so
+    every follow-up like that re-asked "which region?" even though the user
+    had already answered once. The gate now only skips condensing when the
+    message is BOTH long AND already names a region itself — the actual
+    signal for "this doesn't need history to be answered", not length alone.
+    Falls back to prepending the previous user turn when the rewrite is
+    unavailable."""
+    if not history:
+        return message
+    if len(message.split()) > 8 and detect_regions(message):
         return message
     condensed = await condense_followup(llm, message, history)
     if condensed:

@@ -27,8 +27,19 @@ _CONDENSE_SYSTEM = (
     "Chỉ bổ sung chủ đề/vật liệu/khu vực còn thiếu từ lượt trước; giữ nguyên ý "
     "định của người dùng. KHÔNG trả lời câu hỏi, KHÔNG thêm giải thích. Chỉ "
     "xuất đúng một câu hỏi đã viết lại.\n\n"
-    'Ví dụ — Lịch sử: "Giá thép ở Hà Nội thế nào?" / Tiếp nối: "còn ở Đà Nẵng '
-    'thì sao?" → "Giá thép ở Đà Nẵng là bao nhiêu?"'
+    "QUY TẮC VÙNG (khu vực) — BẮT BUỘC: mọi câu hỏi giá vật liệu trong hệ "
+    "thống này CẦN có khu vực (Hà Nội / Đà Nẵng / TP.HCM) mới tra được, kể cả "
+    "khi câu hỏi tiếp nối đã là một câu hoàn chỉnh, đầy đủ chủ ngữ, không có "
+    "đại từ thay thế (\"nó\", \"cái đó\"...). Nếu lịch sử đã có khu vực và câu "
+    "tiếp nối KHÔNG tự nêu khu vực khác, LUÔN LUÔN thêm nguyên khu vực đó vào "
+    "câu viết lại — đừng bỏ qua chỉ vì câu tiếp nối nghe đã đủ ý về mặt ngữ "
+    "pháp.\n\n"
+    'Ví dụ 1 — Lịch sử: "Giá thép ở Hà Nội thế nào?" / Tiếp nối: "còn ở Đà Nẵng '
+    'thì sao?" → "Giá thép ở Đà Nẵng là bao nhiêu?"\n'
+    'Ví dụ 2 — Lịch sử: "Giá BT-01 của Nishu ở Hà Nội?" / Tiếp nối: "NISHU '
+    'PRIMER có mấy loại, giá mỗi loại bao nhiêu?" → "NISHU PRIMER của Nishu ở '
+    'Hà Nội có mấy loại, giá mỗi loại bao nhiêu?" (câu tiếp nối nghe đầy đủ '
+    "nhưng KHÔNG tự nêu khu vực — vẫn phải thêm \"ở Hà Nội\" từ lịch sử)"
 )
 
 
