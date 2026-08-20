@@ -111,6 +111,37 @@ _STRUCTURED_FIELD_WORDS: dict[str, list[str]] = {
     "price_period": ["kỳ công bố", "công bố tháng", "giá tháng mấy", "cập nhật lúc nào"],
 }
 
+# A RELATIVE reference to a period other than "now" ("năm ngoái", "quý
+# trước"). The corpus holds exactly one price_period per material (whatever
+# the source document last published) — there is no history to compare
+# against — so a question phrased this way can never be honestly answered
+# from data alone. Silently answering with the only period on file (as if it
+# satisfied "last year") reads as confirming a number for a period nobody
+# checked; see mentions_relative_past_period()'s caller in app/api/v1/chat.py
+# for how this becomes a NOT_FOUND-style refusal that names the mismatch
+# instead.
+_RELATIVE_PAST_PERIOD_WORDS = [
+    "năm ngoái",
+    "năm trước",
+    "tháng trước",
+    "quý trước",
+    "kỳ trước",
+    "lần trước",
+    "kỳ cũ",
+    "giá cũ",
+]
+
+
+def mentions_relative_past_period(message: str) -> str | None:
+    """The matched phrase ("năm ngoái"...) if the message asks about a period
+    relative to "now" rather than naming (or omitting) one outright, else
+    None."""
+    low = f" {message.lower()} "
+    for phrase in _RELATIVE_PAST_PERIOD_WORDS:
+        if phrase in low:
+            return phrase
+    return None
+
 # Narrative content that only exists in the document chunks.
 _DOCUMENT_WORDS = [
     "vat",
@@ -191,6 +222,18 @@ _MATERIAL_WORDS = [
 # though "bt 01" IS the product code, just not glued to its digits.
 _PRODUCT_CODE_RE = re.compile(r"\b[a-z]{2,}[-\s]?\d{1,4}\b", re.IGNORECASE)
 
+# "nội thất"/"ngoại thất" (and a few other common indoor/outdoor-type splits)
+# distinguish two DIFFERENT real products that otherwise share the same
+# material_name — e.g. "NISHU GRAN" is both a sơn nội thất and a sơn ngoại
+# thất row, priced differently. Left inside material_name (where it never
+# matches, since the product's own name column is just "NISHU GRAN" — the
+# nội/ngoại distinction lives in material_category, a separate column) both
+# rows always come back together and get read out as one confusing answer.
+# Matched as `material_category` instead, via MaterialPriceRepository's own
+# category word-matcher (already wired end to end — see
+# lookup_material_record(material_category=...) in app/api/v1/chat.py).
+_CATEGORY_HINTS = ["nội thất", "ngoại thất"]
+
 
 # "PCB40 khác PCB30 thế nào?" — a product comparison, which lives in the
 # narrative chunks. Deliberately NOT the bare word "khác" and NOT "so sánh":
@@ -236,6 +279,7 @@ _QUESTION_PHRASES = sorted(
         # would then be demanded of the product name.
         *[w for words in _STRUCTURED_FIELD_WORDS.values() for w in words],
         *_DOCUMENT_WORDS,
+        *_RELATIVE_PAST_PERIOD_WORDS,
         "so sánh",
         "bao gồm",
         "đã gồm",
@@ -371,6 +415,17 @@ def extract_manufacturer_query(message: str) -> str | None:
     return name_only or None
 
 
+def extract_category_hint(message: str) -> str | None:
+    """"nội thất" / "ngoại thất" named in the question, or None — see
+    _CATEGORY_HINTS for why this is pulled out as material_category rather
+    than left as part of material_name."""
+    low = message.lower()
+    for hint in _CATEGORY_HINTS:
+        if hint in low:
+            return hint
+    return None
+
+
 def extract_material_query(message: str, regions: list[str] | None = None) -> str | None:
     """The product phrase inside a price question, or None if there isn't one.
 
@@ -412,6 +467,10 @@ def _build_price_decision(
     conversation's context silently vanished. Both layers now build the same
     RouteDecision shape once a message is recognized as a price/attribute
     question, regardless of which layer recognized it."""
+    # A relative-past reference ("năm ngoái") the corpus has no history to
+    # answer — carried through as price_period so the caller can refuse with
+    # the mismatch named instead of silently using the only period on file.
+    past_period = mentions_relative_past_period(raw)
     manufacturer = extract_manufacturer_query(raw)
     # Pulled out BEFORE material_name is computed, not after — left in,
     # "mỏ"/"công ty"/etc. and the org name that follows would also count
@@ -422,6 +481,20 @@ def _build_price_decision(
     # not part of the product's name, so "giá bt 01 của công ty" no longer
     # searches for a product literally named "bt 01 công ty".
     material_source = _MANUFACTURER_LEAD_RE.sub(" ", raw, count=1)
+
+    # "nội thất"/"ngoại thất" identify which of two SAME-NAMED rows the user
+    # means (see _CATEGORY_HINTS) — pulled into material_category, not left
+    # in material_name where it can never match (the distinction lives in a
+    # different column, and the two products' own name is identical).
+    category_hint = extract_category_hint(raw)
+    if category_hint:
+        material_source = re.sub(
+            rf"(?<![\w]){re.escape(category_hint)}(?![\w])",
+            " ",
+            material_source,
+            flags=re.IGNORECASE,
+        )
+
     material = extract_material_query(material_source, regions)
 
     if not material:
@@ -430,6 +503,7 @@ def _build_price_decision(
             route=RequestRoute.CLARIFY,
             intent="price_lookup",
             regions=regions,
+            price_period=past_period,
             requested_fields=fields,
             missing_slots=["material_name", *([] if regions else ["region"])],
             confidence=0.9,
@@ -446,7 +520,9 @@ def _build_price_decision(
             intent="price_lookup",
             regions=[],
             material_name=material,
+            material_category=category_hint,
             manufacturer=manufacturer,
+            price_period=past_period,
             requested_fields=fields,
             missing_slots=["region"],
             confidence=0.9,
@@ -456,7 +532,9 @@ def _build_price_decision(
         intent="price_lookup",
         regions=regions,
         material_name=material,
+        material_category=category_hint,
         manufacturer=manufacturer,
+        price_period=past_period,
         requested_fields=fields,
         missing_slots=[] if regions else ["region"],
         confidence=0.95,

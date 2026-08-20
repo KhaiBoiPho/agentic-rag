@@ -536,6 +536,29 @@ def _parse_data_rows(
         name = cells[name_col].strip()
         unit = cells[unit_col].strip()
 
+        # Self-correct a wrong unit_col mapping using this row's OWN cells,
+        # before anything below (ditto-fill, state.unit) can act on it or
+        # propagate it to later rows.
+        #
+        # A header can be detected right and still point unit_col at the
+        # wrong physical column for one sub-table within a larger document —
+        # measured case: a company-block table (12 columns: Nhóm vật liệu |
+        # Tên vật liệu | Đơn vị tính | Tiêu chuẩn kỹ thuật | Quy cách | Nhà
+        # sản xuất | Xuất xứ | Điều kiện thương mại | Vận chuyển | Ghi chú |
+        # Công bố giá) had every row's `unit` come out as "Bao gồm" — the
+        # literal value of "Vận chuyển" 6 columns further right, while "kg"/
+        # "lít" sat untouched in cells[unit_col]'s neighbour. Cross-checking
+        # every cell in the SAME row against the known unit vocabulary
+        # recovers the real value without inventing one — if nothing in the
+        # row looks like a unit, the original (wrong) value is kept as-is
+        # rather than guessed away, matching this module's fail-closed style.
+        if unit and unit.lower() not in _UNIT_TOKENS:
+            recovered = next(
+                (c.strip() for c in cells if c.strip().lower() in _UNIT_TOKENS), None
+            )
+            if recovered:
+                unit = recovered
+
         # Vendor blocks state the unit once and write "-" (or "-nt-") on every
         # following row — a textual merged cell. "-" is never a real unit, so
         # in this one column it can only mean "same as above"; storing it

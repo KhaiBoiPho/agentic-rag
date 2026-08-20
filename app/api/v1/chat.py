@@ -42,7 +42,7 @@ from app.core.chat.sources import (
 from app.core.chat.topic_guard import is_off_topic, refusal_reply
 from app.core.chunking.base import count_tokens
 from app.core.llm.openrouter import OpenRouterClient
-from app.core.pricing.service import lookup_material_record
+from app.core.pricing.service import PriceLookupResult, PriceStatus, lookup_material_record
 from app.core.retrieval.retriever import Retriever
 from app.core.usage.pricing import estimate_cost_usd
 from app.db.postgres.repositories.message_repo import MessageRepository
@@ -630,16 +630,34 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
             or (decision.route is RequestRoute.CLARIFY and decision.intent == "price_lookup")
         ):
             t0 = time.perf_counter()
-            lookups = [
-                await lookup_material_record(
-                    region=rg,
-                    material_name=decision.material_name,
-                    material_category=decision.material_category,
-                    manufacturer=decision.manufacturer,
-                    requested_fields=decision.requested_fields or ["price"],
-                )
-                for rg in (decision.regions or [None])
-            ]
+            if decision.price_period:
+                # A relative-past period was named ("năm ngoái") — the corpus
+                # holds exactly one price_period per material (whatever the
+                # source document last published), so there is no history to
+                # check this against. Answering with the only period on file
+                # as if it satisfied "last year" would present an unverified
+                # number as confirmed; refuse instead (§6), same terminal
+                # shape as MISSING_SLOTS/AMBIGUOUS/NOT_FOUND below — see
+                # not_found_reply()'s use of query_period.
+                lookups = [
+                    PriceLookupResult(
+                        status=PriceStatus.NOT_FOUND,
+                        region=(decision.regions or [None])[0],
+                        query_name=decision.material_name,
+                        query_period=decision.price_period,
+                    )
+                ]
+            else:
+                lookups = [
+                    await lookup_material_record(
+                        region=rg,
+                        material_name=decision.material_name,
+                        material_category=decision.material_category,
+                        manufacturer=decision.manufacturer,
+                        requested_fields=decision.requested_fields or ["price"],
+                    )
+                    for rg in (decision.regions or [None])
+                ]
             found_records = [rec for r in lookups if r.found for rec in r.records]
 
             # Supporting prose (VAT, scope, notes) only — never a number (§7).
