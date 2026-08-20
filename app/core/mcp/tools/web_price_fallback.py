@@ -24,7 +24,7 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_REGION_LABELS = {"HN": "Hà Nội", "DN": "Đà Nẵng", "HCM": "TP. Hồ Chí Minh", "KH": "Khánh Hoà", "AG": "An Giang"}
+_REGION_LABELS = {"HN": "Hà Nội", "DN": "Đà Nẵng", "HCM": "TP. Hồ Chí Minh"}
 
 
 async def search_web_price(

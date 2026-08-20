@@ -189,10 +189,14 @@ class ChatRequest(BaseModel):
     # `mode` (and every new client) get the routed pipeline; old clients that
     # explicitly send "rag"/"agent" keep exactly the behaviour they had.
     mode: str = "auto"
-    # Web price fallback is OFF in production (§10). A missing price is
-    # reported as missing; it is never quietly filled from a search result.
-    # Opt-in per request, and even then the figure is labelled unverified.
-    allow_web_fallback: bool = False
+    # Web price fallback is ON by default: real DB gaps exist for some
+    # region/material combinations (e.g. gạch xây ở HCM has no "viên"-unit
+    # rows at all), and reporting every such line as "missing" made the
+    # estimate unusable for those regions. A missing DB price now falls back
+    # to web search unless the caller explicitly opts out (allow_web_fallback
+    # = False), and either way the figure is always labelled unverified,
+    # never blended silently with a DB-backed price — see cost_tool.py.
+    allow_web_fallback: bool = True
     # Agentic mode: retrieve across EVERY knowledge base the user can see
     # (the 4 system ones + their own) instead of a single kb_id/project_id.
     # Resolved server-side on each request rather than sent as a list by the
@@ -389,19 +393,26 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
                 )
 
                 data = body.form_submission.data
+                # Công thức mới (Phần thô, mức hoàn thiện duy nhất là "thô" —
+                # không còn finish_level): diện tích tính từ móng + từng tầng
+                # (giả định đều nhau = area_per_floor_m2 × num_floors, form
+                # chưa hỏi diện tích từng tầng riêng lẻ) + mái, thay vì nhận
+                # thẳng một floor_area_m2 đã cộng sẵn.
+                num_floors = int(float(data.get("num_floors", 1)))
                 tool_args = {
-                    "floor_area_m2": float(data["area_per_floor_m2"])
-                    * float(data.get("num_floors", 1)),
+                    "foundation_area_m2": float(data["foundation_area_m2"]),
+                    "foundation_type": data["foundation_type"],
+                    "floor_areas_m2": [float(data["area_per_floor_m2"])] * max(num_floors, 1),
+                    "roof_area_m2": float(data["roof_area_m2"]),
                     "region": data["region"],
-                    "finish_level": data.get("finish_level", "hoan_thien_co_ban"),
                 }
                 # Optional — see intent.py's FORM_SCHEMAS comment. Reverse-
                 # derives an achievable area in build_cost_facts() instead of
                 # only ever answering "what does the area you typed cost".
                 target_budget = data.get("target_budget_vnd")
-                # Fail-closed by default (§10): a line item with no published
-                # price is reported as missing and no total is given, rather
-                # than being topped up from a web search.
+                # Defaults True (see ChatRequest.allow_web_fallback) — a
+                # missing DB price falls back to web search unless the caller
+                # explicitly opts out, always labelled unverified.
                 tool_args["allow_web_fallback"] = body.allow_web_fallback
                 cost = await _compute_cost(tool_args)
                 if cost.get("error"):
@@ -464,8 +475,8 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
                             title="Dự toán chi phí xây dựng",
                         )
                         req_line = (
-                            f"[Dự toán chi phí xây dựng] {tool_args['floor_area_m2']:.0f} m² sàn, "
-                            f"vùng {tool_args['region']}, mức {tool_args['finish_level']}"
+                            f"[Dự toán chi phí xây dựng — phần thô] {cost['area']:.0f} m² sàn, "
+                            f"vùng {tool_args['region']}"
                         )
                         if target_budget:
                             req_line += f", ngân sách mục tiêu {target_budget:,.0f} đ"

@@ -18,8 +18,27 @@ import re
 FORM_SCHEMAS: dict[str, dict] = {
     "construction_cost": {
         "form_id": "construction_cost",
-        "title": "Thông tin để tính chi phí xây dựng",
+        "title": "Thông tin để tính chi phí xây dựng (phần thô)",
         "fields": [
+            {
+                "name": "foundation_area_m2",
+                "label": "Diện tích móng (m2)",
+                "type": "number",
+                "required": True,
+            },
+            {
+                "name": "foundation_type",
+                "label": "Loại móng",
+                "type": "select",
+                "required": True,
+                "default": "mong_bang",
+                "options": [
+                    {"value": "mong_don", "label": "Móng đơn"},
+                    {"value": "mong_coc", "label": "Móng cọc"},
+                    {"value": "mong_bang", "label": "Móng băng"},
+                    {"value": "mong_be", "label": "Móng bè"},
+                ],
+            },
             {
                 "name": "area_per_floor_m2",
                 "label": "Diện tích 1 tầng (m2)",
@@ -34,6 +53,12 @@ FORM_SCHEMAS: dict[str, dict] = {
                 "default": 1,
             },
             {
+                "name": "roof_area_m2",
+                "label": "Diện tích mái (m2)",
+                "type": "number",
+                "required": True,
+            },
+            {
                 "name": "region",
                 "label": "Khu vực",
                 "type": "select",
@@ -42,17 +67,6 @@ FORM_SCHEMAS: dict[str, dict] = {
                     {"value": "HN", "label": "Hà Nội"},
                     {"value": "DN", "label": "Đà Nẵng"},
                     {"value": "HCM", "label": "TPHCM"},
-                ],
-            },
-            {
-                "name": "finish_level",
-                "label": "Mức hoàn thiện",
-                "type": "select",
-                "default": "hoan_thien_co_ban",
-                "options": [
-                    {"value": "tho", "label": "Thô"},
-                    {"value": "hoan_thien_co_ban", "label": "Hoàn thiện cơ bản"},
-                    {"value": "hoan_thien_cao_cap", "label": "Hoàn thiện cao cấp"},
                 ],
             },
             {

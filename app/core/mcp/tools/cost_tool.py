@@ -1,18 +1,25 @@
-"""MCP Tool — top-level construction cost orchestrator.
+"""MCP Tool — construction cost orchestrator for nhà ở dân dụng, phần THÔ.
 
 Scope note (important): without a detailed design (bản vẽ, bảng thống kê
 thép, chỉ dẫn kỹ thuật), the domain guide's own classification (mục 4.1
 "Ước lượng ý tưởng") says only floor-area-based parametric estimation is
 valid — not a detailed take-off. This tool therefore:
-  1. Derives material QUANTITIES from floor_area using reference
-     consumption coefficients (m3 bê tông/m2, kg thép/m2, ...) — these are
-     rough parametric coefficients for low-rise residential construction,
-     not a substitute for actual geometric take-off.
-  2. Prices those quantities via the structured material_prices table
-     (lookup_material_price's underlying repository) for the given region.
-  3. Sums to a MATERIAL cost estimate only — explicitly NOT a turnkey
+  1. Derives floor area from móng/tầng/mái geometry (or accepts it directly).
+  2. Derives PHẦN THÔ material QUANTITIES from that area using reference
+     consumption coefficients + hệ số hao hụt (WF) — rough parametric
+     coefficients for a low-rise residential house, not a substitute for
+     actual geometric take-off.
+  3. Prices those quantities via the structured material_prices table
+     (region-scoped), falling back to web search when the DB has a gap.
+  4. Sums to a MATERIAL cost estimate only — explicitly NOT a turnkey
      "giá xây nhà" figure, since labor, equipment, contractor margin, VAT
      and indirect costs are outside this corpus's price data entirely.
+
+Scope was narrowed deliberately (and the removed code deleted, not just
+hidden): only nhà phố/nhà ở dân dụng is supported — nhà xưởng, nhà kho, sân
+bê tông, san nền, tường rào, vỉa hè, cải tạo are gone. Only "phần thô" is
+priced — sơn, gạch ốp lát, and the 3-tier finish level (thô/cơ bản/cao cấp)
+are gone; there is exactly one, implicit level: thô.
 
 Per mục 55–56 of the domain guide, results are returned as a range with
 assumptions listed, not a single confident number.
@@ -36,67 +43,64 @@ import asyncio
 from mcp.types import TextContent, Tool
 
 from app.core.construction.project_types import (
-    DEFAULT_PROJECT_TYPE,
+    FOUNDATION_HEIGHT_FACTOR,
     MATERIAL_SPECS,
-    PROJECT_TYPES,
+    compute_house_floor_area,
     get_project_type,
 )
 
 COST_TOOL = Tool(
     name="calculate_construction_cost",
     description=(
-        "Ước lượng Ý TƯỞNG chi phí VẬT LIỆU cho một công trình từ diện tích (chưa có bản vẽ "
-        "chi tiết). Hỗ trợ nhiều loại hình: nhà phố, nhà cấp 4, biệt thự, nhà xưởng thép tiền "
-        "chế, nhà kho, sân bê tông/đường nội bộ, san nền, tường rào, vỉa hè lát gạch, cải tạo. "
-        "Trả về khoảng giá kèm giả định — KHÔNG bao gồm nhân công, thiết bị, lợi nhuận nhà "
-        "thầu, VAT, chi phí gián tiếp. Không dùng thay dự toán/hợp đồng."
+        "Ước lượng Ý TƯỞNG chi phí VẬT LIỆU THÔ (thép, xi măng, cát, đá, gạch xây + vật tư "
+        "phụ) cho nhà phố / nhà ở dân dụng, từ diện tích móng/tầng/mái (chưa có bản vẽ chi "
+        "tiết). KHÔNG tính phần hoàn thiện (sơn, gạch ốp lát...), KHÔNG hỗ trợ loại công "
+        "trình khác ngoài nhà ở. Trả về khoảng giá kèm giả định — KHÔNG bao gồm nhân công, "
+        "thiết bị, lợi nhuận nhà thầu, VAT, chi phí gián tiếp. Không dùng thay dự toán/hợp đồng."
     ),
     inputSchema={
         "type": "object",
         "properties": {
             "floor_area_m2": {
                 "type": "number",
-                "description": "Tổng diện tích sàn xây dựng (m2), đã gồm các tầng",
-            },
-            "region": {"type": "string", "enum": ["HN", "DN", "HCM", "KH", "AG"]},
-            "project_type": {
-                "type": "string",
-                "enum": list(PROJECT_TYPES.keys()),
-                "default": DEFAULT_PROJECT_TYPE,
                 "description": (
-                    "Loại hình công trình. Quyết định bộ vật liệu và hệ số tiêu hao: "
-                    "nha_pho (nhà phố/nhà ở khung BTCT), nha_cap_4, biet_thu, "
-                    "nha_xuong (nhà thép tiền chế), nha_kho, san_be_tong (sân/đường nội bộ), "
-                    "san_nen (san lấp), tuong_rao (tính theo m2 MẶT TƯỜNG), "
-                    "via_he_lat_gach, cai_tao (sửa chữa không đụng kết cấu)."
+                    "Tổng diện tích sàn xây dựng (m2), đã gồm các tầng. Chỉ dùng khi KHÔNG đủ "
+                    "dữ liệu hình học — BỎ QUA trường này nếu đã cung cấp đủ "
+                    "foundation_area_m2 + foundation_type + floor_areas_m2 + roof_area_m2, hệ "
+                    "thống sẽ tự tính diện tích từ 4 trường đó và ưu tiên kết quả tính được."
                 ),
             },
-            "finish_level": {
-                "type": "string",
-                "enum": ["tho", "hoan_thien_co_ban", "hoan_thien_cao_cap"],
-                "default": "hoan_thien_co_ban",
-                "description": (
-                    "Chỉ có ý nghĩa với loại hình có hoàn thiện (nhà ở, tường rào, cải tạo); "
-                    "bị bỏ qua với sân bê tông, san nền, nhà xưởng."
-                ),
+            "foundation_area_m2": {
+                "type": "number",
+                "description": "Diện tích móng (m2) — dùng cùng foundation_type/floor_areas_m2/roof_area_m2 để TỰ TÍNH diện tích sàn theo công thức S_build = S_móng×H_móng + ΣS_tầng + S_mái.",
             },
+            "foundation_type": {
+                "type": "string",
+                "enum": list(FOUNDATION_HEIGHT_FACTOR.keys()),
+                "description": "Loại móng — quyết định hệ số H_móng: mong_don (0,25) | mong_coc (0,35) | mong_bang (0,50) | mong_be (0,70).",
+            },
+            "floor_areas_m2": {
+                "type": "array",
+                "items": {"type": "number"},
+                "description": "Diện tích từng tầng (m2), theo thứ tự — ví dụ [80, 75, 75] cho nhà 3 tầng.",
+            },
+            "roof_area_m2": {
+                "type": "number",
+                "description": "Diện tích mái (m2).",
+            },
+            "region": {"type": "string", "enum": ["HN", "DN", "HCM"]},
         },
-        "required": ["floor_area_m2", "region"],
+        # floor_area_m2 is NOT required at the schema level any more — it can
+        # come either directly, or be derived from the 4 geometry fields (see
+        # their descriptions above). _compute_cost enforces "at least one of
+        # the two" at runtime and returns a clear error otherwise.
+        "required": ["region"],
     },
 )
 
-# Hệ số tiêu hao KHÔNG khai báo ở đây. Chúng thuộc về từng loại hình công
-# trình (`PROJECT_TYPES[...].coefficients` trong project_types.py), vì một bộ
-# hệ số chung không phục vụ được cả nhà phố lẫn nhà xưởng thép tiền chế.
-# `_compute_cost` đọc thẳng từ đó — xem vòng lặp `for slug, per_m2 in
-# project.coefficients.items()`.
-
-_FINISH_MULTIPLIER = {"tho": 1.0, "hoan_thien_co_ban": 1.0, "hoan_thien_cao_cap": 1.15}
-_FINISH_LABELS = {
-    "tho": "thô",
-    "hoan_thien_co_ban": "hoàn thiện cơ bản",
-    "hoan_thien_cao_cap": "hoàn thiện cao cấp",
-}
+# Hệ số tiêu hao KHÔNG khai báo ở đây — nằm trong
+# `PROJECT_TYPES["nha_pho"].coefficients` (project_types.py). `_compute_cost`
+# đọc thẳng từ đó qua vòng lặp `for slug, per_m2 in project.coefficients.items()`.
 
 
 async def _disambiguate(llm, target_desc: str, candidates: list) -> int | None:
@@ -153,7 +157,8 @@ QUY TẮC BẮT BUỘC:
 - Với hạng mục có giá lấy từ web (đánh dấu [n]), giữ NGUYÊN ký hiệu [n] ngay sau
   số tiền của hạng mục đó, và nói rõ đó là giá tham khảo từ web, chưa xác thực.
 - Nêu rõ hạng mục không có dữ liệu giá; nếu thiếu thì giải thích vì sao không đưa tổng.
-- Nhắc ngắn gọn: đây chỉ là chi phí vật liệu chính, chưa gồm nhân công/thiết bị/lợi nhuận/VAT.
+- Nhắc ngắn gọn: đây chỉ là chi phí vật liệu THÔ chính, chưa gồm nhân công/thiết bị/lợi
+  nhuận/VAT, và chưa gồm phần hoàn thiện (sơn, gạch ốp lát...).
 - NẾU VÀ CHỈ NẾU có dòng "NGÂN SÁCH MỤC TIÊU: ... đ" xuất hiện NGUYÊN VĂN
   trong dữ liệu bên dưới: đây là câu hỏi thực sự của người dùng ("với ngân
   sách này thì xây được bao nhiêu") — trả lời thẳng vào đó trước (diện tích
@@ -190,20 +195,24 @@ def build_cost_facts(data: dict, target_budget: float | None = None) -> str:
     right precision level here in the first place.
     """
     lines = [
-        f"Loại hình: {data.get('project_label', 'Nhà phố / nhà ở dân dụng')}. "
+        f"Loại hình: {data.get('project_label', 'Nhà phố / nhà ở dân dụng — phần thô')}. "
         f"Quy mô: {data['area']:.0f} {data.get('area_label', 'm² sàn')}. "
-        f"Vùng: {data['region']}."
-        + (
-            f" Mức hoàn thiện: {_FINISH_LABELS.get(data['finish_level'], data['finish_level'])}."
-            if data.get("finish_applies", True)
-            else ""
-        ),
-        "Chi phí VẬT LIỆU (chưa gồm nhân công/thiết bị/lợi nhuận/VAT/gián tiếp).",
+        f"Vùng: {data['region']}.",
+    ]
+    if data.get("area_formula_note"):
+        lines.append(f"Cách tính diện tích: {data['area_formula_note']}.")
+    lines += [
+        "Chi phí VẬT LIỆU THÔ (chưa gồm nhân công/thiết bị/lợi nhuận/VAT/gián tiếp, "
+        "chưa gồm phần hoàn thiện).",
         "",
         "Các hạng mục:",
     ]
     for li in data["line_items"]:
-        if li["subtotal"] is not None:
+        if li.get("derived"):
+            # "Vật tư phụ" — phụ phí % trên thành tiền các dòng khác, không
+            # có khối lượng/đơn giá riêng để in.
+            lines.append(f"- {li['item']}: {li.get('derived_note', '')} = {li['subtotal']:,.0f} đ")
+        elif li["subtotal"] is not None:
             tag = (
                 f" [{li['source_index']}] (giá từ web, chưa xác thực)" if li.get("via_web") else ""
             )
@@ -220,7 +229,7 @@ def build_cost_facts(data: dict, target_budget: float | None = None) -> str:
     if data["has_full_pricing"]:
         low, high = data["priced_subtotal"] * 0.85, data["priced_subtotal"] * 1.20
         lines.append(
-            f"Tổng ước lượng chi phí vật liệu chính: {low:,.0f} – {high:,.0f} đ "
+            f"Tổng ước lượng chi phí vật liệu thô: {low:,.0f} – {high:,.0f} đ "
             "(sai số ±15%/+20% ở cấp độ ý tưởng)."
         )
     else:
@@ -240,14 +249,11 @@ def build_cost_facts(data: dict, target_budget: float | None = None) -> str:
         if data["has_full_pricing"] and data["area"] > 0:
             cost_per_m2 = data["priced_subtotal"] / data["area"]
             suggested_area = target_budget / cost_per_m2
-            lines.append(
-                f"Đơn giá vật liệu chính ước tính: {cost_per_m2:,.0f} đ/m² sàn "
-                f"(ở mức hoàn thiện đã chọn)."
-            )
+            lines.append(f"Đơn giá vật liệu thô ước tính: {cost_per_m2:,.0f} đ/m² sàn.")
             lines.append(
                 f"→ Với ngân sách này, diện tích sàn khả thi ước tính khoảng "
-                f"{suggested_area:.0f} m² (cùng vùng/mức hoàn thiện, chỉ tính vật liệu "
-                f"4 hạng mục chính — không gồm nhân công/thiết bị/lợi nhuận/VAT)."
+                f"{suggested_area:.0f} m² (cùng vùng, chỉ tính vật liệu thô chính — "
+                f"không gồm nhân công/thiết bị/lợi nhuận/VAT/hoàn thiện)."
             )
         else:
             lines.append(
@@ -265,31 +271,58 @@ async def _compute_cost(args: dict) -> dict:
     from app.core.mcp.tools.web_price_fallback import search_web_price
     from app.db.postgres.repositories.material_price_repo import MaterialPriceRepository
 
-    area = args["floor_area_m2"]
     region = args["region"]
-    finish_level = args.get("finish_level", "hoan_thien_co_ban")
-    # OFF in production (§10). The web fallback is an exploratory-estimate
-    # feature, not a price source: when the vetted DB has no row, the honest
-    # output is "no data for this line item", and the caller decides whether an
-    # unverified web number is acceptable for their purpose. The code path is
-    # kept intact and merely gated — see search_web_price's own docstring for
-    # why a web price is never blended with published prices.
-    allow_web_fallback = bool(args.get("allow_web_fallback", False))
-    if area <= 0:
-        return {"error": "floor_area_m2 phải > 0"}
+    # Default changed to ON: the DB has real gaps for some region/material
+    # combinations (notably gạch xây ở HCM — no "viên"-unit rows at all), and
+    # the decision was to fill those from web search rather than always
+    # reporting "no data" for a common, everyday material. A web price is
+    # still never blended silently — see search_web_price's docstring and
+    # build_cost_facts/_format_cost_text, which always tag it [n]/⚠️ and cite
+    # the source, distinct from a DB-backed (authoritative) price.
+    allow_web_fallback = bool(args.get("allow_web_fallback", True))
 
-    project = get_project_type(args.get("project_type"))
-    # The finish multiplier only touches finishing materials, and only for the
-    # types that actually have a finish stage — scaling a concrete yard's
-    # aggregate by "hoàn thiện cao cấp" would be meaningless.
-    finish_mult = _FINISH_MULTIPLIER.get(finish_level, 1.0) if project.finish_applies else 1.0
-    _FINISHING_SLUGS = {"son", "gach_lat"}
+    # Diện tích: ưu tiên tính từ hình học (móng + từng tầng + mái) nếu đủ dữ
+    # liệu — công thức mới. floor_area_m2 trực tiếp là fallback khi thiếu
+    # dữ liệu hình học.
+    geometry_keys = ("foundation_area_m2", "foundation_type", "floor_areas_m2", "roof_area_m2")
+    area_formula_note: str | None = None
+    if all(args.get(k) is not None for k in geometry_keys):
+        try:
+            area = compute_house_floor_area(
+                foundation_area_m2=args["foundation_area_m2"],
+                foundation_type=args["foundation_type"],
+                floor_areas_m2=args["floor_areas_m2"],
+                roof_area_m2=args["roof_area_m2"],
+                roof_height_factor=args.get("roof_height_factor", 1.0),
+            )
+        except ValueError as exc:
+            return {"error": str(exc)}
+        h = FOUNDATION_HEIGHT_FACTOR[args["foundation_type"]]
+        floors_txt = " + ".join(f"{a:g}" for a in args["floor_areas_m2"])
+        area_formula_note = (
+            f"S_build = {args['foundation_area_m2']:g}×{h:g} (móng) + {floors_txt} (tầng) + "
+            f"{args['roof_area_m2']:g}×{args.get('roof_height_factor', 1.0):g} (mái) = {area:.1f} m²"
+        )
+    else:
+        area = args.get("floor_area_m2")
+        if area is None:
+            return {
+                "error": (
+                    "Thiếu diện tích: truyền floor_area_m2, HOẶC đủ 4 trường "
+                    "foundation_area_m2/foundation_type/floor_areas_m2/roof_area_m2."
+                )
+            }
+    if area <= 0:
+        return {"error": "Diện tích tính được phải > 0"}
+
+    # Chỉ còn một loại hình (nhà phố — phần thô); get_project_type() luôn trả
+    # về nó bất kể args.get("project_type") là gì.
+    project = get_project_type(None)
 
     demands: list[tuple[str, float]] = []
     for slug, per_m2 in project.coefficients.items():
-        qty = area * per_m2
-        if slug in _FINISHING_SLUGS:
-            qty *= finish_mult
+        wf = project.rough_wf.get(slug, 1.0)  # hệ số hao hụt — 1.0 nếu không khai báo
+        qty = area * per_m2 * wf
         if qty > 0:
             demands.append((slug, qty))
 
@@ -308,7 +341,7 @@ async def _compute_cost(args: dict) -> dict:
         target_desc: str,
         exclude_keywords: list[str] | None = None,
     ) -> dict:
-        """Pure — returns a line dict, no shared-state mutation, so the four
+        """Pure — returns a line dict, no shared-state mutation, so the five
         calls can run concurrently (see asyncio.gather below). web_sources
         indices/citation numbers are assigned afterwards in fixed order.
 
@@ -361,10 +394,14 @@ async def _compute_cost(args: dict) -> dict:
                 "_document_id": str(candidates[idx].document_id),
             }
 
-        # Not in the vetted price DB for this region. In production this is
-        # where the line item is reported as missing and the total is withheld
-        # (fail-closed, §10) — the web search only runs when the caller has
-        # explicitly opted in, and even then the figure is cited as unverified.
+        # Not in the vetted price DB for this region. Default is now to fall
+        # back to web search (allow_web_fallback defaults True — see above)
+        # rather than always reporting "missing", because some region/material
+        # combinations have real DB gaps (e.g. gạch xây ở HCM). The figure is
+        # still always cited as unverified [n]/⚠️, never blended silently
+        # with DB-backed prices. Passing allow_web_fallback=False explicitly
+        # restores the old fail-closed behaviour (report missing, withhold
+        # the total) for a caller that wants it.
         if not allow_web_fallback:
             return {
                 "item": label,
@@ -405,9 +442,7 @@ async def _compute_cost(args: dict) -> dict:
     # Run every material lookup concurrently — each is an independent DB
     # query + LLM disambiguation (+ possibly a web-price search), and
     # serially they stacked up (a region missing 2-3 prices meant 2-3 web
-    # searches back-to-back, ~15s+ each). gather overlaps them. The set of
-    # materials now comes from the project profile, so a factory shed prices
-    # structural steel and roof sheeting while a concrete yard prices neither.
+    # searches back-to-back, ~15s+ each). gather overlaps them.
     results = await asyncio.gather(
         *(
             price_line(
@@ -443,20 +478,50 @@ async def _compute_cost(args: dict) -> dict:
     # actually used; an all-web estimate has none and stays web-cited).
     rag_sources, rag_kb_name = await _fetch_source_docs(doc_ids)
 
+    # "Vật tư phụ & hệ thống âm tường thô" — % trên TỔNG THÀNH TIỀN của các
+    # vật liệu thô chính, KHÔNG tra material_prices (không phải một sản phẩm
+    # thật). Thiếu giá bất kỳ vật liệu nền nào thì phụ phí cũng phải báo
+    # thiếu — nó là % trên chính các dòng đó, không có ý nghĩa nếu tính thiếu.
+    if project.rough_surcharge_pct > 0:
+        base_labels = {MATERIAL_SPECS[s].label for s in project.rough_surcharge_base_slugs}
+        base_items = [li for li in line_items if li["item"] in base_labels]
+        base_missing = [li["item"] for li in base_items if li["subtotal"] is None]
+        if base_missing:
+            missing.append(project.rough_surcharge_label)
+        else:
+            base_subtotal = sum(li["subtotal"] for li in base_items)
+            surcharge = round(base_subtotal * project.rough_surcharge_pct, 0)
+            line_items.append(
+                {
+                    "item": project.rough_surcharge_label,
+                    "qty": None,
+                    "unit": None,
+                    "unit_price": None,
+                    "subtotal": surcharge,
+                    "via_web": False,
+                    "derived": True,
+                    "derived_note": (
+                        f"{project.rough_surcharge_pct:.0%} × "
+                        f"({' + '.join(sorted(base_labels))})"
+                    ),
+                }
+            )
+
     priced_subtotal = sum(li["subtotal"] for li in line_items if li["subtotal"] is not None)
     has_full_pricing = not missing
 
     return {
         "error": None,
         "area": area,
+        "area_formula_note": area_formula_note,
         "region": region,
-        "finish_level": finish_level,
         "project_type": project.key,
         "project_label": project.label,
         "area_label": project.area_label,
         "project_note": project.note,
-        "finish_applies": project.finish_applies,
         "coef": dict(project.coefficients),
+        "rough_wf": dict(project.rough_wf),
+        "rough_surcharge_pct": project.rough_surcharge_pct,
         "line_items": line_items,
         "missing": missing,
         "web_sources": web_sources,
@@ -518,28 +583,33 @@ def _format_cost_text(data: dict) -> str:
     """Rich markdown table version — used by the MCP/agent tool-loop path,
     where the tool result is fed back to an LLM anyway. The human-in-the-loop
     form path uses build_cost_facts + COST_PRESENT_PROMPT to stream prose."""
-    area, region, finish_level = data["area"], data["region"], data["finish_level"]
+    area, region = data["area"], data["region"]
     line_items, missing, web_sources = data["line_items"], data["missing"], data["web_sources"]
     coef = data["coef"]
     area_label = data.get("area_label", "m² sàn")
 
-    finish_txt = (
-        f" · mức hoàn thiện **{_FINISH_LABELS.get(finish_level, finish_level)}**"
-        if data.get("finish_applies", True)
-        else ""
-    )
     lines = [
-        "### Ước lượng ý tưởng chi phí vật liệu",
-        f"**{data.get('project_label', 'Nhà phố / nhà ở dân dụng')}** — "
-        f"**{area:.0f} {area_label}** · vùng **{region}**{finish_txt}",
+        "### Ước lượng ý tưởng chi phí vật liệu thô",
+        f"**{data.get('project_label', 'Nhà phố / nhà ở dân dụng — phần thô')}** — "
+        f"**{area:.0f} {area_label}** · vùng **{region}**",
         "",
-        "*(Chưa gồm nhân công, thiết bị, lợi nhuận nhà thầu, VAT, chi phí gián tiếp.)*",
+        "*(Chưa gồm nhân công, thiết bị, lợi nhuận nhà thầu, VAT, chi phí gián tiếp, và "
+        "chưa gồm phần hoàn thiện — sơn, gạch ốp lát...)*",
         "",
+    ]
+    if data.get("area_formula_note"):
+        lines.append(f"*Cách tính diện tích: {data['area_formula_note']}*")
+        lines.append("")
+    lines += [
         "| Hạng mục | Khối lượng | Đơn giá | Thành tiền |",
         "|---|---:|---:|---:|",
     ]
     for li in line_items:
-        if li["subtotal"] is not None:
+        if li.get("derived"):
+            lines.append(
+                f"| {li['item']} | _{li.get('derived_note', '')}_ | — | **{li['subtotal']:,.0f} đ** |"
+            )
+        elif li["subtotal"] is not None:
             tag = f" `[${li['source_index']}]`" if li.get("via_web") else ""
             unit_price_cell = f"{li['unit_price']:,.0f} đ{tag}"
             if li.get("via_web"):
@@ -556,7 +626,7 @@ def _format_cost_text(data: dict) -> str:
     if data["has_full_pricing"]:
         priced_subtotal = data["priced_subtotal"]
         low, high = priced_subtotal * 0.85, priced_subtotal * 1.20
-        lines.append(f"### Tổng chi phí vật liệu chính: **{low:,.0f} – {high:,.0f} đ**")
+        lines.append(f"### Tổng chi phí vật liệu thô: **{low:,.0f} – {high:,.0f} đ**")
         lines.append("")
         lines.append(
             "*Khoảng ±15%/+20% phản ánh sai số ở cấp độ ý tưởng (mục 4.1), "
@@ -581,11 +651,20 @@ def _format_cost_text(data: dict) -> str:
         f"<details><summary>Giả định đã dùng (hệ số tiêu hao tham khảo / {area_label})</summary>"
     )
     lines.append("")
+    rough_wf = data.get("rough_wf") or {}
     for key, value in coef.items():
         spec = MATERIAL_SPECS.get(key)
         label = spec.label if spec else key
         unit = spec.unit if spec else ""
-        lines.append(f"- {label}: {value:g} {unit}/{area_label}")
+        wf = rough_wf.get(key)
+        wf_txt = f" × hao hụt {wf:g}" if wf and wf != 1.0 else ""
+        lines.append(f"- {label}: {value:g} {unit}/{area_label}{wf_txt}")
+    if data.get("rough_surcharge_pct"):
+        lines.append(
+            f"- {data.get('rough_surcharge_pct', 0):.0%} phụ phí vật tư phụ & hệ thống âm "
+            "tường thô, tính trên tổng thành tiền các vật liệu thô chính "
+            "(theo Phụ lục VIII – TT 12/2021/TT-BXD cho phần hao hụt)."
+        )
     if data.get("project_note"):
         lines.append("")
         lines.append(f"- *{data['project_note']}*")
@@ -593,9 +672,9 @@ def _format_cost_text(data: dict) -> str:
     lines.append("</details>")
     lines.append("")
     lines.append(
-        f"*Đây chỉ là chi phí vật liệu chính của {len(coef)} hạng mục, không phải giá xây "
-        "trọn gói, và không thay thế dự toán từ hồ sơ thiết kế đã duyệt, "
-        "định mức hiện hành hoặc báo giá hợp lệ.*"
+        f"*Đây chỉ là chi phí vật liệu THÔ chính của {len(coef)} hạng mục, không phải giá xây "
+        "trọn gói, không gồm phần hoàn thiện, và không thay thế dự toán từ hồ sơ thiết kế đã "
+        "duyệt, định mức hiện hành hoặc báo giá hợp lệ.*"
     )
 
     if web_sources:

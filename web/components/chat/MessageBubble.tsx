@@ -268,11 +268,13 @@ function Badges({ msg, kinds }: { msg: ChatMessage; kinds: Set<string> }) {
         <Globe /> {t.chat.badgeResearch}
       </span>
     );
-  } else if (!msg.streaming && !(msg.pendingForm && !msg.content)) {
-    // a bare form-request bubble (no answer text yet) isn't "plain chat" —
-    // showing that badge over an interactive form reads as a stray answer
-    badge = <span className="badge plain">{t.chat.badgePlain}</span>;
   }
+  // No "Plain chat — no RAG" fallback badge any more: an answer with no
+  // sources isn't necessarily unrelated small talk — a price lookup that
+  // came back NOT_FOUND/CLARIFY/AMBIGUOUS legitimately has zero sources too
+  // (nothing was found to cite), and labelling that "plain chat" read as the
+  // system having silently abandoned the lookup rather than having tried and
+  // come up empty. No badge in that case is more honest than a wrong one.
 
   if (!badge && !msg.viaVoice && !msg.pinned) return null;
   return (

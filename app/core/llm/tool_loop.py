@@ -66,7 +66,7 @@ async def run_tool_loop(
     llm: OpenRouterClient | None = None,
     model: str | None = None,
     max_rounds: int = 4,
-    allow_web_fallback: bool = False,
+    allow_web_fallback: bool = True,
 ) -> tuple[str, list[dict]]:
     """Returns (final_content, tool_call_log). tool_call_log entries are
     {name, arguments, result} — surfaced to the client as debug info so a
@@ -74,8 +74,11 @@ async def run_tool_loop(
 
     `allow_web_fallback` is threaded down to the cost tool rather than read
     from global config there, so the decision belongs to the request (§10).
-    Default False: a missing official price is reported as missing, not
-    quietly filled in from a web search."""
+    Default True, matching ChatRequest.allow_web_fallback (app/api/v1/chat.py):
+    a missing official price falls back to web search rather than always
+    being reported as missing — real DB gaps exist for some region/material
+    combinations. Pass False explicitly to restore the old fail-closed
+    behaviour."""
     llm = llm or OpenRouterClient()
     conversation = list(messages)
     tool_call_log: list[dict] = []

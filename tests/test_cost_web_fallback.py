@@ -1,8 +1,15 @@
 """Web price fallback gating (spec §10, §12.28-§12.29).
 
-The fallback code is untouched — it is only gated. These tests pin that the
-gate is closed by default and that an opted-in web price is still labelled
-unverified rather than blended into the published-price total.
+The fallback code itself is untouched — only the DEFAULT of the gate changed:
+it used to be closed by default (missing DB price -> "missing", total
+withheld) and is now open by default (missing DB price -> web search),
+because real DB gaps exist for some region/material combinations (e.g. gạch
+xây ở HCM has no "viên"-unit rows at all) and always reporting those as
+"missing" made the estimate unusable there. These tests now pin that the gate
+is OPEN by default, that `allow_web_fallback=False` still restores the old
+fail-closed behaviour for a caller that wants it, and that an opted-in web
+price is still labelled unverified rather than blended into the
+published-price total.
 """
 
 from __future__ import annotations
@@ -50,20 +57,29 @@ ARGS = {"floor_area_m2": 100.0, "region": "HCM", "project_type": "nha_pho"}
 
 
 class TestGate:
-    async def test_28_default_never_calls_the_web_and_withholds_the_total(self, stubbed):
-        """ACCEPTANCE §12.28 — a missing price means missing, not invented."""
+    async def test_28_default_now_falls_back_to_the_web(self, stubbed):
+        """Default flipped to open: a missing DB price is filled from web
+        search rather than always reported as missing (real DB gaps, e.g.
+        gạch xây ở HCM, made the old default unusable for those cases)."""
         data = await cost_tool._compute_cost({**ARGS})
+        assert stubbed["web_calls"] > 0
+        assert data["web_sources"], "every web price must be citable"
+        web_lines = [li for li in data["line_items"] if li.get("via_web")]
+        assert web_lines and all(li.get("source_index") for li in web_lines)
+        facts = cost_tool.build_cost_facts(data)
+        assert "giá từ web, chưa xác thực" in facts
+
+    async def test_explicit_false_restores_fail_closed(self, stubbed):
+        """ACCEPTANCE §12.28 still reachable on demand: a caller that wants
+        the old behaviour (missing price -> missing, total withheld, no web
+        call) gets it by passing allow_web_fallback=False explicitly."""
+        data = await cost_tool._compute_cost({**ARGS, "allow_web_fallback": False})
         assert stubbed["web_calls"] == 0
         assert data["has_full_pricing"] is False
         assert data["missing"], "the unpriced line items must be listed by name"
         assert data["web_sources"] == []
-        # Fail-closed: no single confident number when a major item is missing.
         facts = cost_tool.build_cost_facts(data)
         assert "KHÔNG đưa ra tổng vì thiếu giá của" in facts
-
-    async def test_explicit_false_behaves_like_the_default(self, stubbed):
-        await cost_tool._compute_cost({**ARGS, "allow_web_fallback": False})
-        assert stubbed["web_calls"] == 0
 
     async def test_29_opting_in_marks_the_price_unverified(self, stubbed):
         """ACCEPTANCE §12.29 — allowed, but never presented as a published
@@ -77,14 +93,18 @@ class TestGate:
         assert "giá từ web, chưa xác thực" in facts
 
     async def test_a_db_price_is_preferred_over_the_web_even_when_opted_in(self, stubbed):
-        """The DB stays authoritative — the fallback is only for the gap."""
+        """The DB stays authoritative — the fallback is only for the gap.
+
+        Uses "thép" (one of the 5 rough materials nha_pho still has after
+        the scope cut — sân/xưởng/bê tông-thương-phẩm profiles were removed
+        entirely, see project_types.py) rather than "bê tông"."""
         stubbed["rows"] = [
             SimpleNamespace(
                 id=uuid.uuid4(),
                 document_id=uuid.uuid4(),
-                material_name="Bê tông thương phẩm M250",
-                price_ex_vat=1_200_000,
-                unit="m3",
+                material_name="Thép xây dựng Việt Nhật D10",
+                price_ex_vat=16_000,
+                unit="kg",
                 spec=None,
             )
         ]
@@ -100,8 +120,8 @@ class TestGate:
             data = await ct._compute_cost({**ARGS, "allow_web_fallback": True})
         finally:
             ct._disambiguate = original
-        concrete = [li for li in data["line_items"] if "tông" in li["item"].lower()]
-        assert concrete and concrete[0]["via_web"] is False
+        steel = [li for li in data["line_items"] if "thép" in li["item"].lower()]
+        assert steel and steel[0]["via_web"] is False
 
 
 class TestToolLoopThreading:

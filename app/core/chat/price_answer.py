@@ -17,6 +17,8 @@ thing a model must never do at that moment is be helpful with a number.
 
 from __future__ import annotations
 
+import re
+
 from app.core.chat.sources import AnswerSource, region_label, tool_source
 from app.core.pricing.service import MaterialRecord, PriceLookupResult, PriceStatus
 
@@ -39,6 +41,24 @@ _SLOT_QUESTIONS = {
     "material_name": "bạn muốn tra giá vật liệu nào (ví dụ: xi măng PCB40, thép D12, cát xây tô)?",
     "price_period": "bạn cần giá của kỳ công bố nào?",
 }
+
+# `material_prices.unit` is raw, unnormalized text lifted straight from the
+# source document — many rows already carry a currency prefix ("đ/thùng",
+# "Đ/Bao", "đồng/tấn "), others don't ("ống", "kg", "m"). Blindly formatting
+# every record as f"đ/{rec.unit}" produced "đ/đồng/ống", "đ/đ/m" — a real
+# duplication bug seen in production, not just a cosmetic one, since it makes
+# the unit unreadable. Strip a leading currency token before adding "đ/" back
+# in a single, consistent place.
+_CURRENCY_PREFIX_RE = re.compile(r"^\s*(đồng|đ)\s*/\s*", re.IGNORECASE)
+
+
+def _price_unit_suffix(price: float, unit: str) -> str:
+    """"{price:,.0f} đ/{unit}" with any currency prefix already baked into
+    `unit` stripped first, so the result never doubles up ("đ/đồng/ống")."""
+    clean_unit = _CURRENCY_PREFIX_RE.sub("", unit or "").strip()
+    if not clean_unit:
+        return f"{price:,.0f} đ"
+    return f"{price:,.0f} đ/{clean_unit}"
 
 
 # ─── Presenter ───────────────────────────────────────────────────────────────
@@ -73,7 +93,7 @@ def _record_line(rec: MaterialRecord) -> str:
     bits = [
         f"- {rec.display_name}",
         f"khu vực {region_label(rec.region)}",
-        f"đơn giá {rec.price:,.0f} đ/{rec.unit}",
+        f"đơn giá {_price_unit_suffix(rec.price, rec.unit)}",
     ]
     if rec.price_basis:
         bits.append(f"điều kiện giao: {_BASIS_LABELS.get(rec.price_basis, rec.price_basis)}")
@@ -167,7 +187,7 @@ def ambiguous_reply(result: PriceLookupResult) -> str:
         "",
     ]
     for rec in result.records[:5]:
-        lines.append(f"- {rec.display_name} — {rec.price:,.0f} đ/{rec.unit}")
+        lines.append(f"- {rec.display_name} — {_price_unit_suffix(rec.price, rec.unit)}")
     return "\n".join(lines)
 
 

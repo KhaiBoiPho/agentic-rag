@@ -57,5 +57,5 @@ async def get_chat_config():
             {"code": "DN", "label": "Đà Nẵng"},
             {"code": "HCM", "label": "TP. Hồ Chí Minh"},
         ],
-        "allow_web_fallback_default": False,
+        "allow_web_fallback_default": True,
     }

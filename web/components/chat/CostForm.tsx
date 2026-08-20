@@ -21,8 +21,28 @@ export default function CostForm({
   // Fallback schema for the construction_cost form when the backend doesn't
   // send an explicit field list (it may only send form_id + prefill).
   const DEFAULT_FIELDS: FormField[] = [
+    {
+      name: "foundation_area_m2",
+      label: t.costForm.foundationArea,
+      type: "number",
+      required: true,
+    },
+    {
+      name: "foundation_type",
+      label: t.costForm.foundationType,
+      type: "select",
+      required: true,
+      default: "mong_bang",
+      options: [
+        { value: "mong_don", label: t.costForm.foundationDon },
+        { value: "mong_coc", label: t.costForm.foundationCoc },
+        { value: "mong_bang", label: t.costForm.foundationBang },
+        { value: "mong_be", label: t.costForm.foundationBe },
+      ],
+    },
     { name: "area_per_floor_m2", label: t.costForm.area, type: "number", required: true },
     { name: "num_floors", label: t.costForm.floors, type: "number", required: true, default: 1 },
+    { name: "roof_area_m2", label: t.costForm.roofArea, type: "number", required: true },
     {
       name: "region",
       label: t.costForm.region,
@@ -32,17 +52,6 @@ export default function CostForm({
         { value: "HN", label: t.costForm.regionHN },
         { value: "DN", label: t.costForm.regionDN },
         { value: "HCM", label: t.costForm.regionHCM },
-      ],
-    },
-    {
-      name: "finish_level",
-      label: t.costForm.finish,
-      type: "select",
-      default: "hoan_thien_co_ban",
-      options: [
-        { value: "tho", label: t.costForm.finishRough },
-        { value: "hoan_thien_co_ban", label: t.costForm.finishBasic },
-        { value: "hoan_thien_cao_cap", label: t.costForm.finishHigh },
       ],
     },
     { name: "target_budget_vnd", label: t.costForm.budget, type: "number", required: false },
