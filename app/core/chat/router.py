@@ -262,6 +262,16 @@ _QUESTION_PHRASES = sorted(
         "vật liệu",
         "sản phẩm",
         "có sẵn",
+        # "... có mấy loại, giá mỗi loại bao nhiêu?" — asking how many
+        # variants/each variant's price, not naming a variant called "mấy
+        # loại". Left in, "NISHU PRIMER của Nishu ở Hà Nội có mấy loại, giá
+        # mỗi loại bao nhiêu?" searched for a product literally named "nishu
+        # primer nishu mấy loại mỗi loại", which matches nothing even though
+        # the actual product name is right there at the front.
+        "có mấy loại",
+        "mấy loại",
+        "mỗi loại",
+        "loại nào",
         "hiện nay",
         "hiện tại",
         "bây giờ",
@@ -483,16 +493,17 @@ def route_by_rules(message: str) -> RouteDecision | None:
         )
 
     if wants_price or fields:
-        if not names_material:
-            # "giá bao nhiêu?" with no subject — ask, don't guess (§6.1).
-            return RouteDecision(
-                route=RequestRoute.CLARIFY,
-                intent="price_lookup",
-                regions=regions,
-                requested_fields=fields,
-                missing_slots=["material_name", *([] if regions else ["region"])],
-                confidence=0.9,
-            )
+        # No separate "not names_material -> CLARIFY" pre-check here any more
+        # — _build_price_decision already returns the identical CLARIFY when
+        # extract_material_query finds nothing (see its own docstring/check),
+        # and doing it there instead of here fixes a real gap: `_names_a_material`
+        # only recognizes a Vietnamese material-category word or a DIGIT-
+        # bearing code, so a pure-letter brand+model name ("NISHU PRIMER",
+        # "NISHU CRYSIN" — no digits, not a Vietnamese material word) failed
+        # this pre-check and got asked "which material?" despite being named
+        # outright. extract_material_query has no such blind spot — it
+        # extracts whatever is left after stripping question words/region,
+        # digits or not.
         return _build_price_decision(raw, regions, wants_document, fields)
 
     if wants_document and names_material:

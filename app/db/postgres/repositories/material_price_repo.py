@@ -85,6 +85,22 @@ _UNIT_TOKENS = {
     "tan",
 }
 
+# A hyphen/space-joined "letters-digits" pair in the QUERY ("BT-01", "D 12")
+# is one product code, not two independent words — the letter half is pinned
+# alongside the digit half so relaxation can never split them.
+#
+# Without this: "BT-01 Nishu" (words bt/01/nishu) failed its all-words match
+# (Nishu is a manufacturer, never in material_name), and relaxation dropped
+# "bt" before "nishu" — "bt" occurs in 122 Hà Nội material_name rows
+# (coincidental substring collisions across unrelated products) versus 46 for
+# "nishu", and higher raw frequency is read as "less identifying" — leaving
+# "01"+"nishu" as the surviving filter. That combination matched a DIFFERENT
+# real row ("NISHU KD -01") and returned ITS price with full confidence: not
+# a missed lookup, a wrong one. Pinning "bt" because it is glued to "01" in
+# the user's own text keeps "bt"+"01" together through relaxation, so only
+# "nishu" (the genuinely droppable word here) is ever up for removal.
+_CODE_LETTER_PART_RE = re.compile(r"\b([a-zA-Z]+)[-\s]\d", re.UNICODE)
+
 
 def _has_word(col, word: str):
     """`word` must appear as a WHOLE word in `col`, not as a substring.
@@ -384,7 +400,14 @@ class MaterialPriceRepository:
             # partition whose brand happens to be "kính Việt Nhật".
             # …but a unit of measure carries a digit without being an identity
             # (see _UNIT_TOKENS), so it stays droppable rather than pinned.
-            pinned = [w for w in words if any(c.isdigit() for c in w) and w not in _UNIT_TOKENS]
+            code_letter_parts = {
+                m.group(1).lower() for m in _CODE_LETTER_PART_RE.finditer(material_name or "")
+            }
+            pinned = [
+                w
+                for w in words
+                if (any(c.isdigit() for c in w) or w in code_letter_parts) and w not in _UNIT_TOKENS
+            ]
             droppable = [w for w in words if w not in pinned]
             freq = await self._word_frequencies(s, region, droppable) if droppable else {}
 
