@@ -107,6 +107,10 @@ _STRUCTURED_FIELD_WORDS: dict[str, list[str]] = {
         "điều kiện giao",
         "giao tại đâu",
         "cơ sở giá",
+        "bao gồm vận chuyển",
+        "đã gồm vận chuyển",
+        "gồm vận chuyển",
+        "vận chuyển chưa",
     ],
     "price_period": ["kỳ công bố", "công bố tháng", "giá tháng mấy", "cập nhật lúc nào"],
 }
