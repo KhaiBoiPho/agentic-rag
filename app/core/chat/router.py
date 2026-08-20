@@ -81,6 +81,18 @@ _PRICE_WORDS = [
     "báo giá",
     "mấy tiền",
     "giá thành",
+    # "X và Y, cái nào đắt hơn?" is a price question that never has to say
+    # "giá" at all — comparing cost IS asking for price. Without these, the
+    # condense step's own wording (it sometimes prepends "Giá ..." to a
+    # rewrite, sometimes doesn't — same question, different LLM sample) was
+    # the only thing deciding whether this got routed as a price lookup,
+    # so the identical question sometimes fell through to the classifier and
+    # landed on DOCUMENT_RAG instead of the deterministic tool path.
+    "đắt hơn",
+    "rẻ hơn",
+    "mắc hơn",
+    "đắt nhất",
+    "rẻ nhất",
 ]
 
 # Structured columns that live in `material_prices` — asking for one of these
@@ -320,6 +332,17 @@ _QUESTION_PHRASES = sorted(
         "mấy loại",
         "mỗi loại",
         "loại nào",
+        # Comparison scaffolding ("X và Y, cái nào đắt hơn?") — the question
+        # SHAPE, not part of either product's name. Left in, "cái", "nào",
+        # "đắt", "hơn" all had to appear literally inside material_name too.
+        "cái nào đắt hơn",
+        "cái nào rẻ hơn",
+        "loại nào đắt hơn",
+        "loại nào rẻ hơn",
+        "đắt hơn hay rẻ hơn",
+        "cái nào",
+        "đắt hơn",
+        "rẻ hơn",
         "hiện nay",
         "hiện tại",
         "bây giờ",
@@ -422,12 +445,29 @@ def extract_manufacturer_query(message: str) -> str | None:
 def extract_category_hint(message: str) -> str | None:
     """"nội thất" / "ngoại thất" named in the question, or None — see
     _CATEGORY_HINTS for why this is pulled out as material_category rather
-    than left as part of material_name."""
+    than left as part of material_name.
+
+    Returns None when the message names BOTH ("bột bả nội thất và bột bả
+    ngoại thất, cái nào đắt hơn?") — that is a comparison ACROSS categories,
+    not a request for one of them, so filtering material_category down to
+    just "nội thất" would silently drop the ngoại thất row the question is
+    also asking about. Both phrases are still stripped from material_name by
+    the caller (see matched_category_hints) — only the FILTER is skipped,
+    not the cleanup."""
     low = message.lower()
-    for hint in _CATEGORY_HINTS:
-        if hint in low:
-            return hint
+    present = [hint for hint in _CATEGORY_HINTS if hint in low]
+    if len(present) == 1:
+        return present[0]
     return None
+
+
+def matched_category_hints(message: str) -> list[str]:
+    """Every _CATEGORY_HINTS phrase present, for stripping out of
+    material_name — unlike extract_category_hint, this doesn't collapse to
+    None when more than one is present; a comparison question still needs
+    both phrases removed from the text handed to extract_material_query."""
+    low = message.lower()
+    return [hint for hint in _CATEGORY_HINTS if hint in low]
 
 
 def extract_material_query(message: str, regions: list[str] | None = None) -> str | None:
@@ -490,13 +530,20 @@ def _build_price_decision(
     # means (see _CATEGORY_HINTS) — pulled into material_category, not left
     # in material_name where it can never match (the distinction lives in a
     # different column, and the two products' own name is identical).
+    #
+    # Every occurrence found gets stripped from material_name regardless of
+    # whether extract_category_hint decided to filter by it — a comparison
+    # question naming BOTH ("bột bả nội thất và bột bả ngoại thất, cái nào
+    # đắt hơn?") has category_hint=None (don't filter, the question wants
+    # both rows) but "ngoại thất" is still noise inside material_name; left
+    # in, it demanded "ngoại" as a literal word in a product name column that
+    # never has it, and the resulting all-words-must-match failure varied
+    # with how much conversation history had piled up by the time the
+    # follow-up condenser ran — same question, sometimes a wrong route.
     category_hint = extract_category_hint(raw)
-    if category_hint:
+    for hint in matched_category_hints(raw):
         material_source = re.sub(
-            rf"(?<![\w]){re.escape(category_hint)}(?![\w])",
-            " ",
-            material_source,
-            flags=re.IGNORECASE,
+            rf"(?<![\w]){re.escape(hint)}(?![\w])", " ", material_source, flags=re.IGNORECASE
         )
 
     material = extract_material_query(material_source, regions)
