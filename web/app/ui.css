@@ -264,9 +264,6 @@ table.est tr.total .num{font-size:var(--fs-md);font-weight:750;color:var(--brand
 .cbox{display:flex;align-items:flex-end;gap:10px;border:1px solid var(--line-strong);border-radius:var(--r);
   padding:8px 8px 8px var(--sp-4);background:var(--surface);}
 .cbox:focus-within{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-soft);}
-.cbox .kbchip{align-self:center;flex:none;display:inline-flex;align-items:center;gap:6px;font-family:var(--f-mono);
-  font-size:10px;color:var(--brand-ink);background:var(--brand-soft);border:1px solid var(--brand-line);border-radius:100px;padding:3px 9px;}
-.cbox .kbchip button{background:none;border:none;color:var(--muted);cursor:pointer;padding:0;line-height:1;}
 .cbox textarea{flex:1;border:none;outline:none;background:none;resize:none;font-size:var(--fs-base);line-height:1.5;
   padding:6px 0;min-width:60px;max-height:160px;}
 .ibtn{width:37px;height:37px;flex:none;border-radius:var(--r-sm);cursor:pointer;border:1px solid var(--line-strong);

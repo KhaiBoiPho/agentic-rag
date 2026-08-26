@@ -2,10 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api";
-import { useStore } from "@/lib/store";
 import { tf, useT } from "@/lib/i18n";
 import type { ChatMode } from "@/lib/types";
-import { Book, Bot, Globe, Mic, Search, Send } from "../Icons";
+import { Bot, Globe, Mic, Search, Send } from "../Icons";
 
 export interface SendOpts {
   viaVoice?: boolean;
@@ -33,17 +32,6 @@ export default function Composer({
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const kbs = useStore((s) => s.kbs);
-  const projects = useStore((s) => s.projects);
-  const activeKbId = useStore((s) => s.activeKbId);
-  const activeProjectId = useStore((s) => s.activeProjectId);
-  const setActiveKb = useStore((s) => s.setActiveKb);
-  const setActiveProject = useStore((s) => s.setActiveProject);
-
-  const activeKb = kbs.find((k) => k.id === activeKbId);
-  const activeProject = projects.find((p) => p.id === activeProjectId);
-  const ragOn = mode === "chat" && (activeKb || activeProject);
 
   useEffect(() => {
     const ta = taRef.current;
@@ -110,8 +98,7 @@ export default function Composer({
     }
   }
 
-  const modes: { id: ChatMode; label: string; Icon: typeof Book }[] = [
-    { id: "chat", label: t.chat.modeChat, Icon: Book },
+  const modes: { id: ChatMode; label: string; Icon: typeof Bot }[] = [
     { id: "search", label: t.chat.modeSearch, Icon: Search },
     { id: "research", label: t.chat.modeResearch, Icon: Globe },
     { id: "agentic", label: t.chat.modeAgentic, Icon: Bot },
@@ -122,9 +109,7 @@ export default function Composer({
       ? t.chat.placeholderSearch
       : mode === "research"
         ? t.chat.placeholderResearch
-        : mode === "agentic"
-          ? t.chat.placeholderAgentic
-          : t.chat.placeholderChat;
+        : t.chat.placeholderAgentic;
 
   return (
     <div className="composer">
@@ -138,19 +123,6 @@ export default function Composer({
         </div>
 
         <div className="cbox">
-          {mode === "chat" && activeKb && (
-            <span className="kbchip">
-              <Book width={11} height={11} /> {activeKb.name}
-              <button onClick={() => setActiveKb(null)} aria-label={t.chat.deselectKb}>✕</button>
-            </span>
-          )}
-          {mode === "chat" && activeProject && (
-            <span className="kbchip">
-              <Book width={11} height={11} /> {activeProject.name}
-              <button onClick={() => setActiveProject(null)} aria-label={t.chat.deselectProject}>✕</button>
-            </span>
-          )}
-
           <textarea
             ref={taRef}
             rows={1}
@@ -175,11 +147,7 @@ export default function Composer({
         </div>
 
         <div className="cfoot">
-          {ragOn ? (
-            <span>{tf(t.chat.ragOn, { name: activeKb?.name ?? activeProject?.name ?? "" })}</span>
-          ) : mode === "chat" ? (
-            <span>{t.chat.ragOffChat}</span>
-          ) : mode === "agentic" ? (
+          {mode === "agentic" ? (
             <span>{t.chat.agenticHint}</span>
           ) : (
             <span>{mode === "search" ? t.chat.webCiteSearch : t.chat.webCiteResearch}</span>

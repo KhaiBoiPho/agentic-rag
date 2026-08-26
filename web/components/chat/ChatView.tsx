@@ -53,7 +53,7 @@ export default function ChatView({ conversationId }: { conversationId: string })
   // conversation (key={id} in the route), so this correctly hydrates each
   // conversation's own saved history instead of always starting empty.
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadMessages(conversationId));
-  const [mode, setMode] = useState<ChatMode>("chat");
+  const [mode, setMode] = useState<ChatMode>("agentic");
   const [speaking, setSpeaking] = useState(false);
 
   const SUGGESTIONS = [t.chat.suggestion1, t.chat.suggestion2, t.chat.suggestion3];
@@ -513,11 +513,11 @@ export default function ChatView({ conversationId }: { conversationId: string })
             <span className="badge web">
               <Bot /> {t.chat.badgeAgentic}
             </span>
-          ) : mode !== "chat" ? (
+          ) : (
             <span className="badge web">
               <Globe /> {mode === "search" ? t.chat.badgeSearch : t.chat.badgeResearch}
             </span>
-          ) : null
+          )
         }
       />
 

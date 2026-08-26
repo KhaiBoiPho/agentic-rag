@@ -87,9 +87,10 @@ export interface Usage {
 // ── Chat / streaming ───────────────────────────────────────────────────────
 
 // "agentic" = retrieval across EVERY knowledge base + construction tool
-// calling (price lookup, cost estimate). The other three are single-KB
-// RAG, web search and deep research respectively.
-export type ChatMode = "chat" | "search" | "research" | "agentic";
+// calling (price lookup, cost estimate) — the default and only general-
+// purpose mode; "chat" (single-KB-scoped RAG) was removed from the UI in
+// favor of it. "search"/"research" remain as explicit web-only modes.
+export type ChatMode = "search" | "research" | "agentic";
 
 // ── Answer sources ─────────────────────────────────────────────────────────
 //
