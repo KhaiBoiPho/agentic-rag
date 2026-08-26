@@ -172,6 +172,35 @@ class TestMatchedProductVisibility:
         assert 'Sản phẩm dùng để định giá (giá tham khảo web): "Giá vật liệu"' in facts
 
 
+GEOMETRY_ARGS = {
+    "foundation_area_m2": 100.0,
+    "foundation_type": "mong_bang",
+    "floor_areas_m2": [100.0],
+    "roof_area_m2": 100.0,
+    "region": "HCM",
+}
+
+
+class TestAreaFormulaIsNeverSilentlyDropped:
+    """A geometry-derived estimate must always show HOW S_build was derived
+    (móng/tầng/mái) — otherwise the reader has no way to tell whether the
+    roof (or the foundation, or a floor) was ever counted at all. The data
+    always carries this; the LLM presenter previously had no rule forcing it
+    to keep the line, and dropped it in practice."""
+
+    async def test_build_cost_facts_always_includes_the_area_breakdown(self, stubbed):
+        data = await cost_tool._compute_cost({**GEOMETRY_ARGS, "allow_web_fallback": True})
+        assert data["area_formula_note"] is not None
+        assert "mái" in data["area_formula_note"]
+        facts = cost_tool.build_cost_facts(data)
+        assert "Cách tính diện tích:" in facts
+        assert data["area_formula_note"] in facts
+
+    def test_presenter_prompt_mandates_keeping_the_area_breakdown(self):
+        assert "Cách tính diện tích" in cost_tool.COST_PRESENT_PROMPT
+        assert "BẮT BUỘC" in cost_tool.COST_PRESENT_PROMPT
+
+
 class TestToolLoopThreading:
     def test_the_llm_cannot_turn_the_gate_on_itself(self):
         """`allow_web_fallback` is not in the tool's public JSON schema, and the

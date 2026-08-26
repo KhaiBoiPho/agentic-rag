@@ -182,6 +182,11 @@ gọn gàng, dễ đọc, thân thiện bằng tiếng Việt — như một tin
 QUY TẮC BẮT BUỘC:
 - GIỮ NGUYÊN 100% mọi con số (khối lượng, đơn giá, thành tiền, khoảng tổng).
   Tuyệt đối KHÔNG đổi số, KHÔNG làm tròn khác đi, KHÔNG bịa thêm.
+- NẾU có dòng "Cách tính diện tích: S_build = ..." trong dữ liệu: BẮT BUỘC phải nêu
+  lại dòng này (có thể diễn đạt gọn hơn nhưng phải giữ đủ các số hạng móng/tầng/mái và
+  kết quả cuối) NGAY ĐẦU câu trả lời, trước khi liệt kê từng vật liệu — đây là cách
+  DUY NHẤT người dùng biết diện tích tổng đã cộng cả phần móng, từng tầng và mái vào
+  hay chưa. TUYỆT ĐỐI không được bỏ qua dòng này chỉ vì muốn câu trả lời gọn hơn.
 - Với hạng mục có giá lấy từ web (đánh dấu [n]), giữ NGUYÊN ký hiệu [n] ngay sau
   số tiền của hạng mục đó, và nói rõ đó là giá tham khảo từ web, chưa xác thực.
 - Nêu rõ hạng mục không có dữ liệu giá; nếu thiếu thì giải thích vì sao không đưa tổng.

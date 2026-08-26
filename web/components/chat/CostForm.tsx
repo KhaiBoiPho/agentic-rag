@@ -44,6 +44,13 @@ export default function CostForm({
     { name: "num_floors", label: t.costForm.floors, type: "number", required: true, default: 1 },
     { name: "roof_area_m2", label: t.costForm.roofArea, type: "number", required: true },
     {
+      name: "roof_height_factor",
+      label: t.costForm.roofFactor,
+      type: "number",
+      required: false,
+      default: 1.0,
+    },
+    {
       name: "region",
       label: t.costForm.region,
       type: "select",
