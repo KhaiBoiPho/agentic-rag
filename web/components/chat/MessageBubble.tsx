@@ -11,7 +11,7 @@ import {
   type Source,
   type WebSource,
 } from "@/lib/types";
-import { Book, Bot, Globe, Mic, Pin, Trash, Warn } from "../Icons";
+import { Book, Bot, Globe, Mic, Note, Pin, Trash, Warn } from "../Icons";
 import Markdown from "./Markdown";
 import ResearchPanel from "./ResearchPanel";
 import CostForm from "./CostForm";
@@ -44,6 +44,21 @@ function MessageBubbleImpl({ msg, onSubmitForm, onTogglePin, onDelete }: Props) 
                 <span className="voice-orb">
                   <span className="voice-orb-ring" />
                   <Mic />
+                  {/* Voice messages never render msg.content in the bubble
+                      (see the else branch below) — this is the only place
+                      the text STT actually extracted is visible at all, so
+                      the user can catch a bad transcription instead of
+                      wondering why the reply doesn't match what they said. */}
+                  {msg.content && (
+                    <button
+                      type="button"
+                      className="voice-transcript-btn"
+                      title={msg.content}
+                      aria-label={t.chat.voiceTranscriptHint}
+                    >
+                      <Note />
+                    </button>
+                  )}
                 </span>
                 <span className="voice-orb-label">{t.chat.voiceMsgSent}</span>
               </div>
