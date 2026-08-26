@@ -59,6 +59,20 @@ FORM_SCHEMAS: dict[str, dict] = {
                 "required": True,
             },
             {
+                # Không thứ nguyên — KHÔNG phải chiều cao mái đo bằng mét (xem
+                # compute_house_floor_area trong project_types.py để biết vì
+                # sao: S_roof(m2) x mét sẽ ra m3, phá vỡ phép cộng diện tích
+                # của cả công thức S_build). Đây là hệ số bù diện tích BỀ MẶT
+                # mái dốc so với diện tích HÌNH CHIẾU mặt bằng (roof_area_m2)
+                # — mái càng dốc, diện tích ngói/tôn thực tế phủ càng lớn hơn
+                # diện tích đo trên mặt bằng.
+                "name": "roof_height_factor",
+                "label": "Hệ số mái (1.0 = mái bằng; mái tôn/ngói dốc: 1.15–1.3)",
+                "type": "number",
+                "required": False,
+                "default": 1.0,
+            },
+            {
                 "name": "region",
                 "label": "Khu vực",
                 "type": "select",

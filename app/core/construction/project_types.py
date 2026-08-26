@@ -148,11 +148,14 @@ def compute_house_floor_area(
 
     `roof_height_factor` mặc định 1.0 (mái tính đúng 1 lần diện tích, không
     nhân thêm). Bản gốc của công thức gọi tham số này là "chiều cao mái"
-    (H_roof) nhưng không nêu đơn vị — nếu hiểu là mét thật thì S_roof(m²) ×
+    (H_roof) nhưng không nêu đơn vị — hiểu là mét thật thì S_roof(m²) ×
     H_roof(m) ra m³, phá vỡ tính nhất quán cộng-dồn-diện-tích của cả công
-    thức, nên ở đây coi nó là một HỆ SỐ không thứ nguyên (giống H_foundation)
-    chứ không phải chiều cao đo bằng mét. Cần đối chiếu lại với nguồn công
-    thức nếu muốn dùng giá trị khác 1.0.
+    thức. Đã xác nhận: đây là một HỆ SỐ không thứ nguyên (giống
+    H_foundation) bù diện tích BỀ MẶT mái dốc so với diện tích HÌNH CHIẾU
+    mặt bằng (roof_area_m2), không phải chiều cao đo bằng mét. Trường này
+    giờ có mặt trong FORM_SCHEMAS (intent.py) và COST_TOOL.inputSchema
+    (cost_tool.py) — trước đây bị bỏ sót ở cả hai nơi nên luôn nhận đúng
+    giá trị mặc định 1.0 dù người dùng có nhà mái dốc hay không.
     """
     if foundation_area_m2 <= 0:
         raise ValueError("foundation_area_m2 phải > 0")

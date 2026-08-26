@@ -72,7 +72,7 @@ COST_TOOL = Tool(
             },
             "foundation_area_m2": {
                 "type": "number",
-                "description": "Diện tích móng (m2) — dùng cùng foundation_type/floor_areas_m2/roof_area_m2 để TỰ TÍNH diện tích sàn theo công thức S_build = S_móng×H_móng + ΣS_tầng + S_mái.",
+                "description": "Diện tích móng (m2) — dùng cùng foundation_type/floor_areas_m2/roof_area_m2 (+ roof_height_factor tuỳ chọn) để TỰ TÍNH diện tích sàn theo công thức S_build = S_móng×H_móng + ΣS_tầng + S_mái×hệ_số_mái.",
             },
             "foundation_type": {
                 "type": "string",
@@ -86,7 +86,17 @@ COST_TOOL = Tool(
             },
             "roof_area_m2": {
                 "type": "number",
-                "description": "Diện tích mái (m2).",
+                "description": "Diện tích mái (m2), đo theo hình chiếu mặt bằng.",
+            },
+            "roof_height_factor": {
+                "type": "number",
+                "description": (
+                    "Hệ số mái, KHÔNG THỨ NGUYÊN (không phải chiều cao thật đo bằng mét — "
+                    "roof_area_m2 x mét sẽ ra m3, phá vỡ phép cộng diện tích của S_build). Bù "
+                    "diện tích bề mặt mái dốc so với roof_area_m2 (diện tích hình chiếu). Mặc "
+                    "định 1.0 (mái bằng); mái tôn/ngói dốc dùng khoảng 1,15-1,3. Bỏ qua trường "
+                    "này nếu không rõ — sẽ dùng mặc định 1.0."
+                ),
             },
             "region": {"type": "string", "enum": ["HN", "DN", "HCM"]},
         },
