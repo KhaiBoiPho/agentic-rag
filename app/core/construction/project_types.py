@@ -135,27 +135,43 @@ FOUNDATION_HEIGHT_FACTOR: dict[str, float] = {
     "mong_be": 0.70,
 }
 
+# H_roof — a dimensionless coefficient (NOT a real height in metres; see
+# compute_house_floor_area's docstring for why a literal metre value would
+# break the m²-only summation of S_build), bumping up S_roof to account for
+# a sloped roof's actual SURFACE area exceeding its footprint (roof_area_m2
+# is measured as the flat footprint/hình chiếu, same as everywhere else in
+# this form). Exposed as a roof TYPE picker rather than a bare number field
+# — same reasoning as FOUNDATION_HEIGHT_FACTOR being picked by loại móng
+# instead of asking the user to type a coefficient they have no way to
+# know: nobody knows their "roof coefficient", but everybody knows what
+# their roof looks like. Reference values, not sourced from an official
+# định mức — same caveat as FOUNDATION_HEIGHT_FACTOR/project coefficients.
+ROOF_TYPE_FACTOR: dict[str, float] = {
+    "mai_bang": 1.00,  # mái bằng — đổ BTCT phẳng, bề mặt ≈ diện tích hình chiếu
+    "mai_ton": 1.15,  # mái tôn — khung thép nhẹ, dốc vừa
+    "mai_ngoi": 1.25,  # mái ngói — kèo gỗ/thép + ngói, dốc nhiều hơn mái tôn
+    "mai_thai": 1.35,  # mái Thái / mái dốc nhiều lớp, nhiều góc — bề mặt lớn nhất
+}
+
 
 def compute_house_floor_area(
     foundation_area_m2: float,
     foundation_type: str,
     floor_areas_m2: list[float],
     roof_area_m2: float,
-    roof_height_factor: float = 1.0,
+    roof_type: str = "mai_bang",
 ) -> float:
     """S_build cho nhà ở, từ móng + từng tầng + mái, thay cho việc người dùng
     phải tự cộng sẵn một con số floor_area_m2 duy nhất.
 
-    `roof_height_factor` mặc định 1.0 (mái tính đúng 1 lần diện tích, không
-    nhân thêm). Bản gốc của công thức gọi tham số này là "chiều cao mái"
-    (H_roof) nhưng không nêu đơn vị — hiểu là mét thật thì S_roof(m²) ×
-    H_roof(m) ra m³, phá vỡ tính nhất quán cộng-dồn-diện-tích của cả công
-    thức. Đã xác nhận: đây là một HỆ SỐ không thứ nguyên (giống
-    H_foundation) bù diện tích BỀ MẶT mái dốc so với diện tích HÌNH CHIẾU
-    mặt bằng (roof_area_m2), không phải chiều cao đo bằng mét. Trường này
-    giờ có mặt trong FORM_SCHEMAS (intent.py) và COST_TOOL.inputSchema
-    (cost_tool.py) — trước đây bị bỏ sót ở cả hai nơi nên luôn nhận đúng
-    giá trị mặc định 1.0 dù người dùng có nhà mái dốc hay không.
+    `roof_type` chọn hệ số mái (ROOF_TYPE_FACTOR) — mặc định "mai_bang"
+    (hệ số 1.0, mái tính đúng 1 lần diện tích, không nhân thêm). Bản gốc
+    của công thức gọi tham số này là "chiều cao mái" (H_roof) nhưng không
+    nêu đơn vị — hiểu là mét thật thì S_roof(m²) × H_roof(m) ra m³, phá vỡ
+    tính nhất quán cộng-dồn-diện-tích của cả công thức. Đã xác nhận: đây là
+    một HỆ SỐ không thứ nguyên (giống H_foundation) bù diện tích BỀ MẶT
+    mái dốc so với diện tích HÌNH CHIẾU mặt bằng (roof_area_m2), không phải
+    chiều cao đo bằng mét.
     """
     if foundation_area_m2 <= 0:
         raise ValueError("foundation_area_m2 phải > 0")
@@ -170,12 +186,14 @@ def compute_house_floor_area(
             f"foundation_type không hợp lệ: {foundation_type!r} "
             f"(phải là một trong {sorted(FOUNDATION_HEIGHT_FACTOR)})"
         )
+    h_roof = ROOF_TYPE_FACTOR.get(roof_type)
+    if h_roof is None:
+        raise ValueError(
+            f"roof_type không hợp lệ: {roof_type!r} "
+            f"(phải là một trong {sorted(ROOF_TYPE_FACTOR)})"
+        )
 
-    return (
-        foundation_area_m2 * h_foundation
-        + sum(floor_areas_m2)
-        + roof_area_m2 * roof_height_factor
-    )
+    return foundation_area_m2 * h_foundation + sum(floor_areas_m2) + roof_area_m2 * h_roof
 
 
 @dataclass(frozen=True)

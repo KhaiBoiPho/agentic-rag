@@ -45,6 +45,7 @@ from mcp.types import TextContent, Tool
 from app.core.construction.project_types import (
     FOUNDATION_HEIGHT_FACTOR,
     MATERIAL_SPECS,
+    ROOF_TYPE_FACTOR,
     compute_house_floor_area,
     get_project_type,
 )
@@ -72,7 +73,7 @@ COST_TOOL = Tool(
             },
             "foundation_area_m2": {
                 "type": "number",
-                "description": "Diện tích móng (m2) — dùng cùng foundation_type/floor_areas_m2/roof_area_m2 (+ roof_height_factor tuỳ chọn) để TỰ TÍNH diện tích sàn theo công thức S_build = S_móng×H_móng + ΣS_tầng + S_mái×hệ_số_mái.",
+                "description": "Diện tích móng (m2) — dùng cùng foundation_type/floor_areas_m2/roof_area_m2 (+ roof_type tuỳ chọn) để TỰ TÍNH diện tích sàn theo công thức S_build = S_móng×H_móng + ΣS_tầng + S_mái×hệ_số_mái.",
             },
             "foundation_type": {
                 "type": "string",
@@ -88,14 +89,15 @@ COST_TOOL = Tool(
                 "type": "number",
                 "description": "Diện tích mái (m2), đo theo hình chiếu mặt bằng.",
             },
-            "roof_height_factor": {
-                "type": "number",
+            "roof_type": {
+                "type": "string",
+                "enum": list(ROOF_TYPE_FACTOR.keys()),
                 "description": (
-                    "Hệ số mái, KHÔNG THỨ NGUYÊN (không phải chiều cao thật đo bằng mét — "
-                    "roof_area_m2 x mét sẽ ra m3, phá vỡ phép cộng diện tích của S_build). Bù "
-                    "diện tích bề mặt mái dốc so với roof_area_m2 (diện tích hình chiếu). Mặc "
-                    "định 1.0 (mái bằng); mái tôn/ngói dốc dùng khoảng 1,15-1,3. Bỏ qua trường "
-                    "này nếu không rõ — sẽ dùng mặc định 1.0."
+                    "Loại mái — quyết định hệ số mái (bù diện tích bề mặt mái dốc so với "
+                    "roof_area_m2, vốn đo theo hình chiếu mặt bằng; KHÔNG phải chiều cao thật "
+                    "đo bằng mét): mai_bang (1,00 — mái bằng đổ BTCT) | mai_ton (1,15 — mái "
+                    "tôn) | mai_ngoi (1,25 — mái ngói) | mai_thai (1,35 — mái Thái/mái dốc "
+                    "nhiều lớp). Bỏ qua nếu không rõ — sẽ dùng mặc định mai_bang."
                 ),
             },
             "region": {"type": "string", "enum": ["HN", "DN", "HCM"]},
@@ -107,6 +109,15 @@ COST_TOOL = Tool(
         "required": ["region"],
     },
 )
+
+# Display-only labels for area_formula_note — ROOF_TYPE_FACTOR's keys are
+# slugs (roof_type enum values), not something to print at a user verbatim.
+_ROOF_TYPE_DISPLAY: dict[str, str] = {
+    "mai_bang": "mái bằng",
+    "mai_ton": "mái tôn",
+    "mai_ngoi": "mái ngói",
+    "mai_thai": "mái Thái",
+}
 
 # Hệ số tiêu hao KHÔNG khai báo ở đây — nằm trong
 # `PROJECT_TYPES["nha_pho"].coefficients` (project_types.py). `_compute_cost`
@@ -340,20 +351,23 @@ async def _compute_cost(args: dict) -> dict:
     area_formula_note: str | None = None
     if all(args.get(k) is not None for k in geometry_keys):
         try:
+            roof_type = args.get("roof_type") or "mai_bang"
             area = compute_house_floor_area(
                 foundation_area_m2=args["foundation_area_m2"],
                 foundation_type=args["foundation_type"],
                 floor_areas_m2=args["floor_areas_m2"],
                 roof_area_m2=args["roof_area_m2"],
-                roof_height_factor=args.get("roof_height_factor", 1.0),
+                roof_type=roof_type,
             )
         except ValueError as exc:
             return {"error": str(exc)}
         h = FOUNDATION_HEIGHT_FACTOR[args["foundation_type"]]
+        h_roof = ROOF_TYPE_FACTOR[roof_type]
         floors_txt = " + ".join(f"{a:g}" for a in args["floor_areas_m2"])
         area_formula_note = (
             f"S_build = {args['foundation_area_m2']:g}×{h:g} (móng) + {floors_txt} (tầng) + "
-            f"{args['roof_area_m2']:g}×{args.get('roof_height_factor', 1.0):g} (mái) = {area:.1f} m²"
+            f"{args['roof_area_m2']:g}×{h_roof:g} (mái — {_ROOF_TYPE_DISPLAY.get(roof_type, roof_type)}) "
+            f"= {area:.1f} m²"
         )
     else:
         area = args.get("floor_area_m2")

@@ -59,18 +59,26 @@ FORM_SCHEMAS: dict[str, dict] = {
                 "required": True,
             },
             {
-                # Không thứ nguyên — KHÔNG phải chiều cao mái đo bằng mét (xem
-                # compute_house_floor_area trong project_types.py để biết vì
-                # sao: S_roof(m2) x mét sẽ ra m3, phá vỡ phép cộng diện tích
-                # của cả công thức S_build). Đây là hệ số bù diện tích BỀ MẶT
-                # mái dốc so với diện tích HÌNH CHIẾU mặt bằng (roof_area_m2)
-                # — mái càng dốc, diện tích ngói/tôn thực tế phủ càng lớn hơn
-                # diện tích đo trên mặt bằng.
-                "name": "roof_height_factor",
-                "label": "Hệ số mái (1.0 = mái bằng; mái tôn/ngói dốc: 1.15–1.3)",
-                "type": "number",
+                # Chọn LOẠI mái thay vì bắt người dùng tự gõ một hệ số họ
+                # không có cách nào biết — không ai biết "hệ số mái" của nhà
+                # mình là bao nhiêu, nhưng ai cũng biết mái nhà mình là loại
+                # gì. Hệ số thật (không thứ nguyên — KHÔNG phải chiều cao đo
+                # bằng mét, xem compute_house_floor_area trong project_types.py)
+                # được tra từ ROOF_TYPE_FACTOR theo giá trị chọn ở đây, bù
+                # diện tích BỀ MẶT mái dốc so với diện tích HÌNH CHIẾU mặt
+                # bằng (roof_area_m2) — mái càng dốc, diện tích ngói/tôn thực
+                # tế phủ càng lớn hơn diện tích đo trên mặt bằng.
+                "name": "roof_type",
+                "label": "Loại mái",
+                "type": "select",
                 "required": False,
-                "default": 1.0,
+                "default": "mai_bang",
+                "options": [
+                    {"value": "mai_bang", "label": "Mái bằng (đổ bê tông)"},
+                    {"value": "mai_ton", "label": "Mái tôn"},
+                    {"value": "mai_ngoi", "label": "Mái ngói"},
+                    {"value": "mai_thai", "label": "Mái Thái / mái dốc nhiều lớp"},
+                ],
             },
             {
                 "name": "region",

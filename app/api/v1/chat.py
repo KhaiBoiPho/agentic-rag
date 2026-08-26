@@ -419,10 +419,11 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
                     "foundation_type": data["foundation_type"],
                     "floor_areas_m2": [float(data["area_per_floor_m2"])] * max(num_floors, 1),
                     "roof_area_m2": float(data["roof_area_m2"]),
-                    # Optional, defaults to 1.0 (mái bằng) — see
-                    # intent.py's FORM_SCHEMAS comment on this field for why
-                    # it is a dimensionless coefficient, not a real height.
-                    "roof_height_factor": float(data.get("roof_height_factor") or 1.0),
+                    # Optional, defaults to "mai_bang" — see intent.py's
+                    # FORM_SCHEMAS comment on this field for why it's a roof
+                    # TYPE picker (mapping to a dimensionless coefficient)
+                    # rather than a number the user would have no way to know.
+                    "roof_type": data.get("roof_type") or "mai_bang",
                     "region": data["region"],
                 }
                 # Optional — see intent.py's FORM_SCHEMAS comment. Reverse-
