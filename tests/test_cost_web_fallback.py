@@ -124,6 +124,54 @@ class TestGate:
         assert steel and steel[0]["via_web"] is False
 
 
+class TestMatchedProductVisibility:
+    """The reply must name the EXACT product a price came from (not just the
+    generic category label "Xi măng"/"Thép") and show how its quantity was
+    derived from the formula — user-requested: "phải trả về tên vật liệu mà
+    bạn đã lấy trong hệ thống và giá của nó"."""
+
+    async def test_db_priced_line_names_its_exact_product_and_formula(self, stubbed):
+        stubbed["rows"] = [
+            SimpleNamespace(
+                id=uuid.uuid4(),
+                document_id=uuid.uuid4(),
+                material_name="Thép xây dựng Việt Nhật D10",
+                price_ex_vat=16_000,
+                unit="kg",
+                spec="D10",
+                manufacturer="Việt Nhật",
+            )
+        ]
+
+        async def pick_first(llm, target_desc, candidates):
+            return 0 if candidates else None
+
+        original = cost_tool._disambiguate
+        cost_tool._disambiguate = pick_first
+        try:
+            data = await cost_tool._compute_cost({**ARGS, "allow_web_fallback": True})
+        finally:
+            cost_tool._disambiguate = original
+
+        steel = next(li for li in data["line_items"] if "thép" in li["item"].lower())
+        assert steel["matched_name"] == "Thép xây dựng Việt Nhật D10 (D10) — Việt Nhật"
+        assert steel.get("formula_note")
+
+        facts = cost_tool.build_cost_facts(data)
+        assert 'Sản phẩm dùng để định giá (giá công bố): "Thép xây dựng Việt Nhật D10' in facts
+        assert steel["formula_note"] in facts
+
+        text = cost_tool._format_cost_text(data)
+        assert "Thép xây dựng Việt Nhật D10" in text
+
+    async def test_web_priced_line_names_the_web_result_it_used(self, stubbed):
+        data = await cost_tool._compute_cost({**ARGS, "allow_web_fallback": True})
+        web_line = next(li for li in data["line_items"] if li.get("via_web"))
+        assert web_line["matched_name"] == "Giá vật liệu"  # fake_web's title
+        facts = cost_tool.build_cost_facts(data)
+        assert 'Sản phẩm dùng để định giá (giá tham khảo web): "Giá vật liệu"' in facts
+
+
 class TestToolLoopThreading:
     def test_the_llm_cannot_turn_the_gate_on_itself(self):
         """`allow_web_fallback` is not in the tool's public JSON schema, and the

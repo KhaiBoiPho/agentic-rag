@@ -113,6 +113,24 @@ COST_TOOL = Tool(
 # đọc thẳng từ đó qua vòng lặp `for slug, per_m2 in project.coefficients.items()`.
 
 
+def _display_name(row) -> str:
+    """The specific product a price came from, for showing "which cement did
+    the system actually price this with" instead of only the generic
+    category label (§ user request: matched_name in each line item).
+    `row` is a MaterialPrice ORM row (has material_name/spec/manufacturer)."""
+    name = row.material_name
+    # getattr, not row.spec/row.manufacturer directly — test stubs (and any
+    # future lightweight row shape) don't always carry every optional column,
+    # and neither is essential to identify which product this is.
+    spec = getattr(row, "spec", None)
+    if spec:
+        name += f" ({spec})"
+    manufacturer = getattr(row, "manufacturer", None)
+    if manufacturer:
+        name += f" — {manufacturer}"
+    return name
+
+
 async def _disambiguate(llm, target_desc: str, candidates: list) -> int | None:
     """Ask the LLM to pick the candidate row matching target_desc, or None
     if it says none fit (or its answer can't be parsed) — never guess."""
@@ -167,6 +185,12 @@ QUY TẮC BẮT BUỘC:
 - Với hạng mục có giá lấy từ web (đánh dấu [n]), giữ NGUYÊN ký hiệu [n] ngay sau
   số tiền của hạng mục đó, và nói rõ đó là giá tham khảo từ web, chưa xác thực.
 - Nêu rõ hạng mục không có dữ liệu giá; nếu thiếu thì giải thích vì sao không đưa tổng.
+- Với MỖI hạng mục có dòng "Sản phẩm dùng để định giá: ...": PHẢI nêu ĐÚNG TÊN SẢN PHẨM
+  cụ thể đó trong câu trả lời (VD "Xi măng PCB40 Hà Tiên"), không được chỉ nói chung chung
+  "xi măng" — người dùng cần biết giá đang tính dựa trên sản phẩm nào để đối chiếu lại.
+- Với MỖI hạng mục có dòng "Công thức khối lượng: ...": nêu ngắn gọn cách tính ra khối
+  lượng đó (diện tích × định mức × hao hụt) ngay trước hoặc trong ngoặc, để người dùng
+  thấy được luồng tính từ công thức ra số liệu, không chỉ đưa thẳng kết quả cuối.
 - Nhắc ngắn gọn: đây chỉ là chi phí vật liệu THÔ chính, chưa gồm nhân công/thiết bị/lợi
   nhuận/VAT, và chưa gồm phần hoàn thiện (sơn, gạch ốp lát...).
 - NẾU VÀ CHỈ NẾU có dòng "NGÂN SÁCH MỤC TIÊU: ... đ" xuất hiện NGUYÊN VĂN
@@ -222,18 +246,31 @@ def build_cost_facts(data: dict, target_budget: float | None = None) -> str:
             # "Vật tư phụ" — phụ phí % trên thành tiền các dòng khác, không
             # có khối lượng/đơn giá riêng để in.
             lines.append(f"- {li['item']}: {li.get('derived_note', '')} = {li['subtotal']:,.0f} đ")
-        elif li["subtotal"] is not None:
+            continue
+        # Full formula-to-number trail per material — user-requested: don't
+        # just show the final qty×price, show HOW qty was derived (§ Norm ×
+        # S_build × WF), and WHICH exact product's price was used (not just
+        # the generic category label "item").
+        if li.get("formula_note"):
+            lines.append(f"- {li['item']} — công thức khối lượng: {li['formula_note']}")
+        else:
+            lines.append(f"- {li['item']}:")
+        if li["subtotal"] is not None:
             tag = (
                 f" [{li['source_index']}] (giá từ web, chưa xác thực)" if li.get("via_web") else ""
             )
+            source_kind = "giá tham khảo web" if li.get("via_web") else "giá công bố"
+            if li.get("matched_name"):
+                lines.append(
+                    f"  Sản phẩm dùng để định giá ({source_kind}): \"{li['matched_name']}\""
+                )
             lines.append(
-                f"- {li['item']}: {li['qty']:g} {li['unit']} × {li['unit_price']:,.0f} đ "
+                f"  Thành tiền: {li['qty']:g} {li['unit']} × {li['unit_price']:,.0f} đ "
                 f"= {li['subtotal']:,.0f} đ{tag}"
             )
         else:
             lines.append(
-                f"- {li['item']}: {li['qty']:g} {li['unit']} — "
-                "KHÔNG có dữ liệu giá (kể cả tìm trên web)"
+                f"  {li['qty']:g} {li['unit']} — KHÔNG có dữ liệu giá (kể cả tìm trên web)"
             )
     lines.append("")
     if data["has_full_pricing"]:
@@ -329,12 +366,19 @@ async def _compute_cost(args: dict) -> dict:
     # về nó bất kể args.get("project_type") là gì.
     project = get_project_type(None)
 
-    demands: list[tuple[str, float]] = []
+    # (slug, qty, formula_note) — formula_note is the Norm/S_build/WF trail
+    # for THIS quantity, carried all the way to the output text so "how did
+    # you get this number" is answerable from the reply itself, not just the
+    # final qty×price line.
+    demands: list[tuple[str, float, str]] = []
     for slug, per_m2 in project.coefficients.items():
         wf = project.rough_wf.get(slug, 1.0)  # hệ số hao hụt — 1.0 nếu không khai báo
         qty = area * per_m2 * wf
         if qty > 0:
-            demands.append((slug, qty))
+            wf_txt = f" × hao hụt {wf:g}" if wf != 1.0 else ""
+            unit = MATERIAL_SPECS[slug].unit
+            formula_note = f"{area:.0f} m² × {per_m2:g} {unit}/m²{wf_txt} = {qty:.2f} {unit}"
+            demands.append((slug, qty, formula_note))
 
     repo = MaterialPriceRepository()
     llm = OpenRouterClient()
@@ -349,6 +393,7 @@ async def _compute_cost(args: dict) -> dict:
         qty: float,
         unit: str,
         target_desc: str,
+        formula_note: str,
         exclude_keywords: list[str] | None = None,
     ) -> dict:
         """Pure — returns a line dict, no shared-state mutation, so the five
@@ -393,6 +438,8 @@ async def _compute_cost(args: dict) -> dict:
             unit_price = float(candidates[idx].price_ex_vat) * factors[idx]
             return {
                 "item": label,
+                "matched_name": _display_name(candidates[idx]),
+                "formula_note": formula_note,
                 "qty": round(qty, 2),
                 "unit": unit,
                 "unit_price": unit_price,
@@ -415,6 +462,7 @@ async def _compute_cost(args: dict) -> dict:
         if not allow_web_fallback:
             return {
                 "item": label,
+                "formula_note": formula_note,
                 "qty": qty,
                 "unit": unit,
                 "unit_price": None,
@@ -430,6 +478,7 @@ async def _compute_cost(args: dict) -> dict:
         if web_price is None:
             return {
                 "item": label,
+                "formula_note": formula_note,
                 "qty": qty,
                 "unit": unit,
                 "unit_price": None,
@@ -440,6 +489,10 @@ async def _compute_cost(args: dict) -> dict:
 
         return {
             "item": label,
+            # No DB row here — the web result's own title is the closest
+            # thing to "which product" the price came from.
+            "matched_name": title,
+            "formula_note": formula_note,
             "qty": round(qty, 2),
             "unit": unit,
             "unit_price": web_price,
@@ -462,9 +515,10 @@ async def _compute_cost(args: dict) -> dict:
                 qty,
                 MATERIAL_SPECS[slug].unit,
                 MATERIAL_SPECS[slug].target_desc,
+                formula_note,
                 exclude_keywords=MATERIAL_SPECS[slug].exclude_keywords or None,
             )
-            for slug, qty in demands
+            for slug, qty, formula_note in demands
         )
     )
 
@@ -611,25 +665,32 @@ def _format_cost_text(data: dict) -> str:
         lines.append(f"*Cách tính diện tích: {data['area_formula_note']}*")
         lines.append("")
     lines += [
-        "| Hạng mục | Khối lượng | Đơn giá | Thành tiền |",
-        "|---|---:|---:|---:|",
+        "| Hạng mục | Sản phẩm dùng để định giá | Khối lượng | Đơn giá | Thành tiền |",
+        "|---|---|---:|---:|---:|",
     ]
     for li in line_items:
+        # Khối lượng shows the formula trail ("240 m² × 2 bao/m² = 480 bao"),
+        # not just the final number, when one was computed for this line —
+        # user-requested: the reply must show HOW a number was derived, not
+        # only the result. Derived rows (phụ phí) keep their own % note.
+        qty_cell = f"{li['formula_note']}" if li.get("formula_note") else f"{li.get('qty', '—')}"
         if li.get("derived"):
             lines.append(
-                f"| {li['item']} | _{li.get('derived_note', '')}_ | — | **{li['subtotal']:,.0f} đ** |"
+                f"| {li['item']} | — | _{li.get('derived_note', '')}_ | — "
+                f"| **{li['subtotal']:,.0f} đ** |"
             )
         elif li["subtotal"] is not None:
             tag = f" `[${li['source_index']}]`" if li.get("via_web") else ""
             unit_price_cell = f"{li['unit_price']:,.0f} đ{tag}"
             if li.get("via_web"):
                 unit_price_cell += " ⚠️"
+            product_cell = li.get("matched_name") or "—"
             lines.append(
-                f"| {li['item']} | {li['qty']:g} {li['unit']} | {unit_price_cell} "
+                f"| {li['item']} | {product_cell} | {qty_cell} | {unit_price_cell} "
                 f"| **{li['subtotal']:,.0f} đ** |"
             )
         else:
-            lines.append(f"| {li['item']} | {li['qty']:g} {li['unit']} | _không có dữ liệu_ | — |")
+            lines.append(f"| {li['item']} | — | {qty_cell} | _không có dữ liệu_ | — |")
 
     lines.append("")
 
