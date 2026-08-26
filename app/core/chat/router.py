@@ -310,7 +310,12 @@ _QUESTION_PHRASES = sorted(
         "cho mình hỏi",
         "cho tôi hỏi",
         "cho tôi biết",
+        "cho em hỏi",
         "mình muốn hỏi",
+        "mình muốn biết",
+        "tôi muốn biết",
+        "em muốn biết",
+        "làm ơn cho biết",
         "tôi muốn hỏi",
         # Generic nouns for "the thing being asked about" — not part of any
         # product's actual name, so left in they get demanded of the

@@ -184,6 +184,110 @@ class TestAliasRetry:
         assert len(repo.calls) == 1
 
 
+class FakeLLM:
+    def __init__(self, reply: str):
+        self.reply = reply
+        self.calls = 0
+
+    async def chat(self, **kwargs):
+        self.calls += 1
+        return self.reply
+
+
+class TestLLMFallbackRetry:
+    """The third tier — only reached when the raw query AND the deterministic
+    alias retry both find nothing. See lookup_material_record's docstring."""
+
+    async def test_llm_extracted_name_finds_the_row_after_rule_extraction_fails(self):
+        found = _Row("Thép Hoà Phát D12", "HN", 18_500_000)
+        # "material_name" here is the kind of noise a phrase-list miss leaves
+        # behind (garbled, unanswerable) — the raw message still holds the
+        # real product, which only the LLM path ever sees.
+        repo = FakeRepo(on_name={"tôi muốn biết thép xây dựng": [], "thép": [found]})
+        llm = FakeLLM('{"material_name": "thép", "code_variants": []}')
+        res = await lookup_material_record(
+            region="HN",
+            material_name="tôi muốn biết thép xây dựng",
+            repo=repo,
+            llm=llm,
+            raw_message="tôi muốn biết giá thép xây dựng ở hà nội",
+        )
+        assert res.status is PriceStatus.FOUND
+        assert res.llm_retry is True
+        assert res.llm_applied == "thép"
+        assert llm.calls == 1
+
+    async def test_code_variant_finds_an_oddly_split_product_code(self):
+        found = _Row("Xi măng PCB40 Hà Tiên", "HCM", 1_450_000)
+        repo = FakeRepo(on_name={"pc b40": [], "xi măng pc b40": []})
+        repo.on_name["PCB40"] = [found]
+        llm = FakeLLM('{"material_name": null, "code_variants": ["PCB40"]}')
+        res = await lookup_material_record(
+            region="HCM",
+            material_name="pc b40",
+            repo=repo,
+            llm=llm,
+            raw_message="giá xi măng pc b40 ở tp hcm",
+        )
+        assert res.status is PriceStatus.FOUND
+        assert res.llm_applied == "PCB40"
+
+    async def test_not_reached_when_the_rule_query_already_found_something(self):
+        """The LLM must never be spent on a question the deterministic path
+        already answered — cost/latency guard, not just correctness."""
+        found = _Row("Xi măng PCB40 Hà Tiên", "HCM", 1_450_000)
+        repo = FakeRepo({"HCM": [found]})
+        llm = FakeLLM('{"material_name": "should never be used"}')
+        res = await lookup_material_record(
+            region="HCM", material_name="xi măng PCB40", repo=repo, llm=llm,
+            raw_message="giá xi măng PCB40 ở tp hcm",
+        )
+        assert res.status is PriceStatus.FOUND
+        assert res.llm_retry is False
+        assert llm.calls == 0
+
+    async def test_not_reached_without_an_llm_or_raw_message(self):
+        """Omitting llm/raw_message reproduces pre-fallback behaviour exactly
+        — callers that don't opt in are unaffected."""
+        repo = FakeRepo(on_name={"xi măng lạ": []})
+        res = await lookup_material_record(region="HCM", material_name="xi măng lạ", repo=repo)
+        assert res.status is PriceStatus.NOT_FOUND
+        assert res.llm_retry is False
+        assert res.llm_applied is None
+
+    async def test_still_not_found_when_the_llm_also_finds_nothing(self):
+        """Terminal stays terminal — the LLM candidate is tried exactly once,
+        never a second guess on top of its own guess."""
+        repo = FakeRepo(on_name={"vật liệu lạ": [], "gạch không nung": []})
+        llm = FakeLLM('{"material_name": "gạch không nung", "code_variants": []}')
+        res = await lookup_material_record(
+            region="HCM",
+            material_name="vật liệu lạ",
+            repo=repo,
+            llm=llm,
+            raw_message="cho mình hỏi giá vật liệu lạ ở tp hcm",
+        )
+        assert res.status is PriceStatus.NOT_FOUND
+        assert res.llm_retry is False
+        assert res.llm_applied is None
+
+    async def test_llm_failure_leaves_result_not_found_not_error(self):
+        repo = FakeRepo(on_name={"xi măng lạ": []})
+        res = await lookup_material_record(
+            region="HCM",
+            material_name="xi măng lạ",
+            repo=repo,
+            llm=BrokenLLM(),
+            raw_message="giá xi măng lạ ở tp hcm",
+        )
+        assert res.status is PriceStatus.NOT_FOUND
+
+
+class BrokenLLM:
+    async def chat(self, **kwargs):
+        raise RuntimeError("openrouter down")
+
+
 class TestCanonicalizer:
     @pytest.mark.parametrize(
         ("raw", "expected"),

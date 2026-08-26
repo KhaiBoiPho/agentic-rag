@@ -670,6 +670,14 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
                         material_category=decision.material_category,
                         manufacturer=decision.manufacturer,
                         requested_fields=decision.requested_fields or ["price"],
+                        # LLM slot re-extraction as a last-resort retry, only
+                        # spent when the rule-extracted name (and its
+                        # deterministic alias) both find nothing — see
+                        # llm_extractor.py and lookup_material_record's own
+                        # docstring for why this is a fallback, not a
+                        # replacement for the rule layer.
+                        llm=llm,
+                        raw_message=resolved_query,
                     )
                     for rg in (decision.regions or [None])
                 ]

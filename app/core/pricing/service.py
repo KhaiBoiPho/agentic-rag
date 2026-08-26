@@ -93,6 +93,12 @@ class PriceLookupResult:
     query_period: str | None = None
     alias_retry: bool = False
     alias_applied: str | None = None
+    # Set when the deterministic alias retry also found nothing and an LLM
+    # re-extraction (see app/core/chat/llm_extractor.py) was tried as a last
+    # resort — surfaced in the structured log so a route that only worked
+    # because of this fallback is traceable, same purpose as alias_applied.
+    llm_retry: bool = False
+    llm_applied: str | None = None
     error: str | None = None
 
     @property
@@ -261,6 +267,8 @@ async def lookup_material_record(
     requested_fields: list[str] | None = None,
     limit: int = 10,
     repo=None,
+    llm=None,
+    raw_message: str | None = None,
 ) -> PriceLookupResult:
     """Structured price lookup. `repo` is injectable so the decision logic is
     testable without a database.
@@ -270,6 +278,12 @@ async def lookup_material_record(
     been told. A CATALOGUE question ("công ty X bán những loại cát nào") does
     not: it names a company, has no province in it, and forcing one made the
     model guess (it picked HN for a supplier that only appears in HCM).
+
+    `llm`/`raw_message` are optional and only used as a THIRD attempt, after
+    the direct query and the deterministic alias retry both find nothing —
+    see llm_extractor.py's docstring for why this exists and why it is a
+    fallback rather than the primary extraction path. Omitting them (the
+    default) reproduces the exact behaviour before this fallback existed.
     """
     fields = requested_fields or ["price"]
     wants_price = "price" in fields
@@ -314,6 +328,33 @@ async def lookup_material_record(
                 alias_retry = True
                 alias_applied = alias
                 records = await _query(alias)
+
+        llm_retry = False
+        llm_applied: str | None = None
+        if not records and llm is not None and raw_message:
+            # Last resort: the deterministic paths (raw query + alias) both
+            # found nothing. Re-derive slots from the ORIGINAL message — not
+            # from `material_name`, which may itself be the garbled output of
+            # a phrase-list miss — and try each candidate once, in order,
+            # stopping at the first that finds a row. Still the exact same
+            # strict repository lookup; this only supplies better query
+            # strings to it (§6.3's contract, extended to an LLM-sourced
+            # candidate instead of a fixed alias table).
+            from app.core.chat.llm_extractor import extract_slots_llm
+
+            slots = await extract_slots_llm(raw_message, llm)
+            if slots is not None:
+                candidates = [c for c in slots.code_variants if c]
+                if slots.material_name and slots.material_name not in candidates:
+                    candidates.append(slots.material_name)
+                for candidate in candidates:
+                    if candidate.strip().lower() == (material_name or "").strip().lower():
+                        continue
+                    records = await _query(candidate)
+                    if records:
+                        llm_retry = True
+                        llm_applied = candidate
+                        break
     except Exception as exc:
         logger.exception("price lookup failed")
         return PriceLookupResult(
@@ -332,6 +373,8 @@ async def lookup_material_record(
             query_name=material_name,
             alias_retry=alias_retry,
             alias_applied=alias_applied,
+            llm_retry=llm_retry,
+            llm_applied=llm_applied,
         )
 
     # Defence in depth: the repository already filters by region, but a row
@@ -345,6 +388,8 @@ async def lookup_material_record(
                 query_name=material_name,
                 alias_retry=alias_retry,
                 alias_applied=alias_applied,
+                llm_retry=llm_retry,
+                llm_applied=llm_applied,
             )
 
     status = (
@@ -357,4 +402,6 @@ async def lookup_material_record(
         query_name=material_name,
         alias_retry=alias_retry,
         alias_applied=alias_applied,
+        llm_retry=llm_retry,
+        llm_applied=llm_applied,
     )
