@@ -406,6 +406,28 @@ class TestNotFoundIsTerminal:
         events = await run_stream(app, {**BASE, "message": "Giá xi măng ở TPHCM?"})
         text = "".join(e.get("delta", "") for e in events)
         assert "Bạn muốn xem loại nào" in text
+        # AMBIGUOUS is not "no data" — real, sourced rows WERE found (they're
+        # listed by name/price in the reply above); only picking ONE is
+        # refused. The candidates must still cite their source document,
+        # same as any FOUND answer — see chat.py's AMBIGUOUS branch.
+        done = next(e for e in events if e.get("done"))
+        assert done["sources"], "an ambiguous answer must still cite the candidates it named"
+
+    async def test_ambiguous_candidates_are_document_sourced_not_bare_names(self, client_factory):
+        """The listed candidates come from real material_prices rows, not
+        thin air — each one must carry provenance a user can check."""
+        app, *_ = client_factory(
+            price_rows={
+                "HCM": [
+                    price_row("Xi măng PCB40 Hà Tiên", "HCM", 1_450_000),
+                    price_row("Xi măng trắng PCW40", "HCM", 3_900_000),
+                ]
+            }
+        )
+        events = await run_stream(app, {**BASE, "message": "Giá xi măng ở TPHCM?"})
+        done = next(e for e in events if e.get("done"))
+        assert len(done["sources"]) == 2
+        assert all(s.get("filename") == "BangGia-VLXD.pdf" for s in done["sources"])
 
 
 class TestMixedRequests:

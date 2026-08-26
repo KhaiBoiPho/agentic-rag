@@ -730,6 +730,18 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
                 # nothing gets a chance to be helpful with a number here (§6).
                 blocked = lookups[0]
                 reply = deterministic_reply(blocked, decision.material_name) or ""
+                if blocked.status is PriceStatus.AMBIGUOUS:
+                    # Unlike NOT_FOUND/MISSING_SLOTS/ERROR, AMBIGUOUS is not
+                    # "no data" — real, authoritative rows WERE found;
+                    # ambiguous_reply() lists them by name and price, only
+                    # refusing to pick ONE. Clearing sources below (as if
+                    # nothing was found) made those listed prices look
+                    # sourceless. Cite exactly the candidates named in the
+                    # reply (same slice/order as ambiguous_reply) so each
+                    # source chip corresponds to a line the user can see.
+                    answer_sources = dedupe_sources(
+                        answer_sources + await price_sources(blocked.records[:5])
+                    )
                 if decision.route is RequestRoute.MIXED and supporting_ctx:
                     # §7 — the explanatory half can still be answered, as long
                     # as the reply says plainly that no verified price was found.
@@ -751,10 +763,11 @@ async def stream_chat(body: ChatRequest, current_user: CurrentUser):
                         reply += token
                         yield _sse({"type": "text", "delta": token, "done": False})
                 else:
-                    # A blocked price answer cites nothing: there is no
-                    # authoritative row, and shipping the RAG chips alongside
-                    # would suggest the number came from somewhere after all.
-                    answer_sources = []
+                    if blocked.status is not PriceStatus.AMBIGUOUS:
+                        # A genuinely blocked price answer (no data at all)
+                        # cites nothing — shipping RAG chips alongside would
+                        # suggest the number came from somewhere after all.
+                        answer_sources = []
                     yield _sse({"type": "text", "delta": reply, "done": False})
 
             wire_sources = to_wire(answer_sources)
