@@ -39,7 +39,22 @@ _CONDENSE_SYSTEM = (
     'Ví dụ 2 — Lịch sử: "Giá BT-01 của Nishu ở Hà Nội?" / Tiếp nối: "NISHU '
     'PRIMER có mấy loại, giá mỗi loại bao nhiêu?" → "NISHU PRIMER của Nishu ở '
     'Hà Nội có mấy loại, giá mỗi loại bao nhiêu?" (câu tiếp nối nghe đầy đủ '
-    "nhưng KHÔNG tự nêu khu vực — vẫn phải thêm \"ở Hà Nội\" từ lịch sử)"
+    "nhưng KHÔNG tự nêu khu vực — vẫn phải thêm \"ở Hà Nội\" từ lịch sử)\n\n"
+    "QUY TẮC CHỦ ĐỀ (đại từ thay thế \"nó\"/\"cái đó\"/\"sản phẩm đó\"...) — "
+    "BẮT BUỘC: đại từ luôn thay cho ĐÚNG MỘT sản phẩm cụ thể — sản phẩm mà "
+    "TRỢ LÝ vừa nhắc tên/trả lời ở LƯỢT NGAY TRƯỚC ĐÓ (không phải một sản "
+    "phẩm khác được nhắc ở đâu đó xa hơn trong lịch sử, kể cả khi tên đó nghe "
+    "\"khớp\" hơn với chủ đề). Chép lại CHÍNH XÁC nguyên văn tên sản phẩm đó "
+    "từ câu trả lời gần nhất của trợ lý — không rút gọn, không đổi sang một "
+    "sản phẩm khác, không tự suy diễn thêm chi tiết (mã hàng, hãng...) mà "
+    "lịch sử không ghi. Nếu không chắc \"nó\" ám chỉ sản phẩm nào, GIỮ NGUYÊN "
+    "đại từ trong câu viết lại thay vì đoán bừa một cái tên.\n\n"
+    'Ví dụ 3 — Lịch sử: "Đèn điện chiếu sáng đường phố của công ty Phương Đông '
+    'được bảo hành mấy năm?" / Trợ lý: "Đèn điện chiếu sáng đường phố của công '
+    'ty Phương Đông được bảo hành 05 năm." / Tiếp nối: "Tiêu chuẩn kỹ thuật của '
+    'nó là gì?" → "Tiêu chuẩn kỹ thuật của đèn điện chiếu sáng đường phố của '
+    'công ty Phương Đông là gì?" (LẤY ĐÚNG sản phẩm trợ lý vừa nói, KHÔNG lấy '
+    "một sản phẩm nào khác dù có vẻ liên quan)"
 )
 
 
