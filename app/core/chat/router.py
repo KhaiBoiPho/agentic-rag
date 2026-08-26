@@ -676,10 +676,17 @@ _CLASSIFIER_SYSTEM = """\
 Bạn phân loại câu hỏi của người dùng trong hệ thống tra cứu vật liệu xây dựng.
 Chỉ trả lời đúng MỘT nhãn, viết hoa, không giải thích:
 
-EXACT_STRUCTURED — hỏi giá/đơn vị/nhà sản xuất/quy cách/kỳ công bố của một sản
-  phẩm cụ thể (dữ liệu này nằm trong bảng có cấu trúc).
-DOCUMENT_RAG — hỏi giải thích, so sánh, tiêu chuẩn, VAT, phạm vi áp dụng, ghi
-  chú (nội dung nằm trong văn bản).
+EXACT_STRUCTURED — hỏi ĐÚNG MỘT trong các CỘT sau của một sản phẩm cụ thể,
+  không hơn: giá, đơn vị tính, nhà sản xuất, quy cách (kích thước), tiêu
+  chuẩn kỹ thuật, kỳ công bố, điều kiện giao (tại mỏ/tại chân công trình).
+  CHỈ 7 thứ này nằm trong bảng có cấu trúc.
+DOCUMENT_RAG — hỏi giải thích, so sánh, tiêu chuẩn xây dựng chung (QCVN/TCVN
+  của ngành, không phải cột "tiêu chuẩn kỹ thuật" của 1 sản phẩm), VAT, phạm
+  vi áp dụng, ghi chú, hoặc BẤT KỲ thuộc tính nào KHÁC 7 cột trên — ví dụ bảo
+  hành, công suất, tuổi thọ, thông số vận hành, xuất xứ, cách lắp đặt. Những
+  thứ này chỉ tồn tại dưới dạng văn bản mô tả sản phẩm, KHÔNG có cột riêng,
+  nên dù nghe giống "hỏi một thuộc tính cụ thể của sản phẩm" vẫn phải xếp vào
+  đây, không phải EXACT_STRUCTURED.
 MIXED — vừa hỏi giá vừa hỏi điều kiện/tiêu chuẩn/VAT.
 ESTIMATE — dự toán chi phí/khối lượng cho cả công trình.
 CLARIFY — thiếu thông tin bắt buộc (không rõ vật liệu hoặc không rõ khu vực).
