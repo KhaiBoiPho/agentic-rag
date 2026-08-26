@@ -71,9 +71,10 @@ class MaterialRecord:
     # printed there (TCVN/QCVN/ASTM/JIS). `material_prices` has no column for
     # it, so this is an extraction, never an inference.
     technical_standard: str | None = None
-    # `material_prices` rows carry the source document but not the page they
-    # were parsed from, so provenance stops at document_id. Kept in the shape
-    # the spec asks for rather than faked with a plausible number.
+    # The PDF page this row was parsed from — populated for rows ingested
+    # after migration 0011 (see its docstring); NULL for anything older or
+    # from a page-less source (DOCX/Markdown), and left as None here rather
+    # than guessed.
     page_num: int | None = None
 
     @property
@@ -138,6 +139,10 @@ def _to_record(row) -> MaterialRecord:
         price_period=row.price_period,
         notes=row.notes,
         technical_standard=_extract_standard(row.spec, row.notes, row.raw_row_text),
+        # getattr, not row.page_num — a `repo=` stub passed in tests (or any
+        # lightweight row shape) may predate this column; treat it as
+        # "unknown" rather than raising.
+        page_num=getattr(row, "page_num", None),
     )
 
 

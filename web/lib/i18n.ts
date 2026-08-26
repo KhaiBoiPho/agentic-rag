@@ -85,6 +85,9 @@ const vi = {
     // Shown on a citation that carries no region of its own. Never replaced
     // with the region of the question.
     sourceNoRegion: "Không gắn vùng",
+    // Prefixes a citation chip's page number ("Tr. 12") — no space needed on
+    // the caller's side, this string already ends with one.
+    sourcePagePrefix: "Tr. ",
     badgeVoice: "Giọng nói",
     voiceMsgSent: "Đã gửi bằng giọng nói",
     sourcesLabel: "Nguồn",
@@ -364,6 +367,7 @@ const en = {
     badgeTool: "Data lookup",
     badgeToolRag: "Tool + RAG",
     sourceNoRegion: "No region",
+    sourcePagePrefix: "p. ",
     badgeVoice: "Voice",
     voiceMsgSent: "Sent by voice",
     sourcesLabel: "Sources",

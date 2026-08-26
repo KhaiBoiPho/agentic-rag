@@ -213,6 +213,11 @@ class MaterialPrice(Base):
 
     manufacturer: Mapped[str | None] = mapped_column(String(255), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Which page of the source PDF this row was parsed from — NULL for
+    # DOCX/Markdown sources (no page concept) and for anything ingested
+    # before migration 0011 (see its docstring: no backfill, original PDF
+    # bytes aren't retained after ingestion).
+    page_num: Mapped[int | None] = mapped_column(Integer, nullable=True)
     raw_row_text: Mapped[str] = mapped_column(Text)  # dòng gốc để audit khi cần đối soát
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

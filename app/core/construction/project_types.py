@@ -137,20 +137,29 @@ FOUNDATION_HEIGHT_FACTOR: dict[str, float] = {
 
 # H_roof — a dimensionless coefficient (NOT a real height in metres; see
 # compute_house_floor_area's docstring for why a literal metre value would
-# break the m²-only summation of S_build), bumping up S_roof to account for
-# a sloped roof's actual SURFACE area exceeding its footprint (roof_area_m2
-# is measured as the flat footprint/hình chiếu, same as everywhere else in
-# this form). Exposed as a roof TYPE picker rather than a bare number field
-# — same reasoning as FOUNDATION_HEIGHT_FACTOR being picked by loại móng
-# instead of asking the user to type a coefficient they have no way to
-# know: nobody knows their "roof coefficient", but everybody knows what
-# their roof looks like. Reference values, not sourced from an official
-# định mức — same caveat as FOUNDATION_HEIGHT_FACTOR/project coefficients.
+# break the m²-only summation of S_build). Exposed as a roof TYPE picker
+# rather than a bare number field — same reasoning as
+# FOUNDATION_HEIGHT_FACTOR being picked by loại móng instead of asking the
+# user to type a coefficient they have no way to know: nobody knows their
+# "roof coefficient", but everybody knows what their roof looks like.
+#
+# CORRECTED (was 1.00-1.35, backwards): this system only prices STRUCTURAL
+# rough materials (thép/xi măng/cát/đá/gạch), never roofing sheet/tile
+# material itself. The original ≥1.0 values reasoned about roofING surface
+# area (tôn/ngói coverage, which scales UP with slope) — the wrong axis for
+# a coefficient that scales structural-material quantity. The right
+# question is "how much thép/bê tông/gạch does this roof need relative to a
+# full storey (which has walls + columns on top of its slab)?" — almost
+# always LESS than a full floor, same direction as FOUNDATION_HEIGHT_FACTOR
+# (0.25-0.70), not more. Values below follow the same informal convention
+# Vietnamese nhà thầu commonly quote for "diện tích mái tính %" — reference
+# only, not sourced from an official định mức (same caveat as
+# FOUNDATION_HEIGHT_FACTOR/project coefficients).
 ROOF_TYPE_FACTOR: dict[str, float] = {
-    "mai_bang": 1.00,  # mái bằng — đổ BTCT phẳng, bề mặt ≈ diện tích hình chiếu
-    "mai_ton": 1.15,  # mái tôn — khung thép nhẹ, dốc vừa
-    "mai_ngoi": 1.25,  # mái ngói — kèo gỗ/thép + ngói, dốc nhiều hơn mái tôn
-    "mai_thai": 1.35,  # mái Thái / mái dốc nhiều lớp, nhiều góc — bề mặt lớn nhất
+    "mai_bang": 0.50,  # mái bằng — đổ BTCT, là 1 lớp sàn thật nhưng không có tường/cột phía trên
+    "mai_ton": 0.30,  # mái tôn — khung kèo thép nhẹ, gần như không tốn xi măng/cát/đá/gạch
+    "mai_ngoi": 0.50,  # mái ngói — kèo thép/gỗ + ngói, tốn hơn tôn nhưng vẫn ít hơn mái bằng đổ đặc
+    "mai_thai": 0.60,  # mái Thái / nhiều lớp — dốc phức tạp, giằng mái, tốn nhất trong nhóm mái nhẹ
 }
 
 

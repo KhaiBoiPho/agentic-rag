@@ -501,9 +501,16 @@ def _parse_data_rows(
     state: _ParseState,
     raw_rows: list[list[str]] | None = None,
     assume_column_merges: bool = False,
+    page_num: int | None = None,
 ) -> tuple[list[MaterialPriceRow], list[str]]:
     """`raw_rows`, when given, is the same block of rows *before* merged-cell
-    fill — used only to recognise group-heading rows by their emptiness."""
+    fill — used only to recognise group-heading rows by their emptiness.
+
+    `page_num`, when given, is stamped onto every row produced here — the
+    PDF page this block of the table came from (see extract_price_rows'
+    caller). None for a source with no page concept (DOCX/Markdown), or for
+    a caller (e.g. parse_price_table, used on a standalone table) that never
+    had a page to begin with."""
     rows: list[MaterialPriceRow] = []
     warnings: list[str] = []
     name_col, unit_col, category_col = mapping.name_col, mapping.unit_col, mapping.category_col
@@ -700,6 +707,7 @@ def _parse_data_rows(
                     raw_row_text=" | ".join(non_empty),
                     spec=_cell(spec_col),
                     manufacturer=manufacturer,
+                    page_num=page_num,
                 )
             )
             priced_any = True
@@ -708,6 +716,17 @@ def _parse_data_rows(
             warnings.append(f"Không đọc được giá cho dòng: {' | '.join(non_empty)[:120]}")
 
     return rows, warnings
+
+
+_LABEL_PAGE_RE = re.compile(r"^page (\d+)")
+
+
+def _page_num_from_label(label: str) -> int | None:
+    """"page 12" / "page 12 bảng 2" (OCR path, ocr_fallback.py) -> 12. None
+    for a DOCX/Markdown label ("table N" — no page concept for those
+    formats) rather than guessing one."""
+    m = _LABEL_PAGE_RE.match(label)
+    return int(m.group(1)) if m else None
 
 
 def parse_price_table(table: list[list[str | None]]) -> TableParseResult:
@@ -805,7 +824,12 @@ def extract_price_rows(
                 continue
 
         rows, warnings = _parse_data_rows(
-            data_rows, last_mapping, state, raw_data_rows, assume_column_merges
+            data_rows,
+            last_mapping,
+            state,
+            raw_data_rows,
+            assume_column_merges,
+            page_num=_page_num_from_label(label),
         )
         for r in rows:
             r.region = region

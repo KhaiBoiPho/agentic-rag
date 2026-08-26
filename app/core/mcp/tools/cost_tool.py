@@ -93,11 +93,13 @@ COST_TOOL = Tool(
                 "type": "string",
                 "enum": list(ROOF_TYPE_FACTOR.keys()),
                 "description": (
-                    "Loại mái — quyết định hệ số mái (bù diện tích bề mặt mái dốc so với "
-                    "roof_area_m2, vốn đo theo hình chiếu mặt bằng; KHÔNG phải chiều cao thật "
-                    "đo bằng mét): mai_bang (1,00 — mái bằng đổ BTCT) | mai_ton (1,15 — mái "
-                    "tôn) | mai_ngoi (1,25 — mái ngói) | mai_thai (1,35 — mái Thái/mái dốc "
-                    "nhiều lớp). Bỏ qua nếu không rõ — sẽ dùng mặc định mai_bang."
+                    "Loại mái — quyết định hệ số mái, tính trên khối lượng thép/xi măng/cát/"
+                    "đá/gạch cần cho phần mái so với 1 tầng đầy đủ (KHÔNG phải chiều cao thật "
+                    "đo bằng mét, và KHÔNG liên quan diện tích tôn/ngói lợp mái — hệ thống "
+                    "không định giá vật liệu lợp mái): mai_bang (0,50 — mái bằng đổ BTCT) | "
+                    "mai_ton (0,30 — mái tôn, khung kèo thép nhẹ) | mai_ngoi (0,50 — mái ngói) "
+                    "| mai_thai (0,60 — mái Thái/mái dốc nhiều lớp). Bỏ qua nếu không rõ — sẽ "
+                    "dùng mặc định mai_bang."
                 ),
             },
             "region": {"type": "string", "enum": ["HN", "DN", "HCM"]},

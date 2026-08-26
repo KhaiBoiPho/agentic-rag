@@ -196,6 +196,7 @@ textarea.control{resize:vertical;line-height:1.5;}
 .chip .chip-region{font-weight:600;background:var(--bg);border:1px solid var(--brand-line);
   border-radius:100px;padding:1px 7px;font-size:10px;white-space:nowrap;}
 .chip .chip-period{font-family:var(--f-mono);font-size:10px;opacity:.7;white-space:nowrap;}
+.chip .chip-page{font-family:var(--f-mono);font-size:10px;opacity:.7;white-space:nowrap;}
 sup.ref{font-family:var(--f-mono);font-size:9px;font-weight:700;background:var(--warn-soft);color:var(--warn);
   padding:1px 4px;border-radius:3px;margin:0 1px;vertical-align:super;line-height:1;text-decoration:none;}
 

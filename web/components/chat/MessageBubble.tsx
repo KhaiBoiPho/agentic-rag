@@ -138,6 +138,17 @@ function MessageBubbleImpl({ msg, onSubmitForm, onTogglePin, onDelete }: Props) 
                     {/* The citation's OWN region, straight from its metadata.
                         Never the region of the question — see lib/types.ts. */}
                     <span className="chip-region">{regionText(s, t.chat.sourceNoRegion)}</span>
+                    {/* Applies to every source kind alike (RAG chunk AND
+                        tool/SQL price row) — both have carried page_num from
+                        the backend all along (pdf_chunker.py for RAG,
+                        price_extractor.py for material_prices rows since
+                        migration 0011); only the chip never rendered it. */}
+                    {s.page_num != null && (
+                      <span className="chip-page">
+                        {t.chat.sourcePagePrefix}
+                        {s.page_num}
+                      </span>
+                    )}
                     {s.price_period && <span className="chip-period">{s.price_period}</span>}
                     {/* A percentage only when the score IS one. Retrieval is
                         hybrid now, so `score` is usually an RRF score — a sum

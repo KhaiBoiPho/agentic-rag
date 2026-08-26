@@ -10,8 +10,10 @@ from __future__ import annotations
 
 from app.core.ingestion.price_extractor import (
     _ColumnMapping,
+    _page_num_from_label,
     _ParseState,
     _parse_data_rows,
+    extract_price_rows,
     parse_price_table,
 )
 
@@ -104,3 +106,47 @@ class TestCategoryHeadingRow:
         result = parse_price_table(table)
         assert len(result.rows) == 1
         assert result.rows[0].material_category == "XI MĂNG"
+
+
+class TestPageNumTagging:
+    """Every citation chip used to show a filename and nothing else — no way
+    to find the row in a 100+ page phụ lục. Page numbers were available at
+    parse time all along (price_tables.py's PDF adapter labels each table
+    "page N"); this just carries that label through onto the row."""
+
+    def test_page_num_from_label(self):
+        assert _page_num_from_label("page 12") == 12
+        # OCR path (ocr_fallback.py) appends a table index to the label.
+        assert _page_num_from_label("page 12 bảng 2") == 12
+        # No page concept for DOCX/Markdown sources.
+        assert _page_num_from_label("table 3") is None
+
+    def test_extract_price_rows_tags_each_row_with_its_page(self):
+        table = [
+            _row("STT", "Tên vật liệu", "Đơn vị tính", "Đơn giá"),
+            _row("1", "Xi măng PCB40", "kg", "1.300"),
+        ]
+        result = extract_price_rows(
+            b"",
+            region="HN",
+            source_type="official_annex",
+            filename="x.pdf",
+            tables=[("page 7", table, table)],
+        )
+        assert len(result.rows) == 1
+        assert result.rows[0].page_num == 7
+
+    def test_a_source_with_no_page_concept_leaves_page_num_none(self):
+        table = [
+            _row("STT", "Tên vật liệu", "Đơn vị tính", "Đơn giá"),
+            _row("1", "Xi măng PCB40", "kg", "1.300"),
+        ]
+        result = extract_price_rows(
+            b"",
+            region="HN",
+            source_type="official_annex",
+            filename="x.md",
+            tables=[("table 1", table, table)],
+        )
+        assert len(result.rows) == 1
+        assert result.rows[0].page_num is None

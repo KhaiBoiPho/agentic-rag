@@ -24,25 +24,33 @@ class TestComputeHouseFloorArea:
             floor_areas_m2=[80, 80],
             roof_area_m2=100,
         )
-        assert area == pytest.approx(100 * 0.5 + 80 + 80 + 100 * 1.0)
+        assert area == pytest.approx(
+            100 * 0.5 + 80 + 80 + 100 * ROOF_TYPE_FACTOR["mai_bang"]
+        )
 
-    def test_sloped_roof_type_increases_area(self):
-        flat = compute_house_floor_area(
+    def test_heavier_roof_type_yields_a_larger_area(self):
+        """A lighter structure (mái tôn — steel truss, no concrete slab)
+        must contribute LESS to S_build than a heavier one (mái Thái —
+        multi-tier, more bracing) — same direction as FOUNDATION_HEIGHT_FACTOR,
+        not the inverted ≥1.0 values this coefficient used to have."""
+        light = compute_house_floor_area(
             foundation_area_m2=100,
             foundation_type="mong_bang",
             floor_areas_m2=[80],
             roof_area_m2=100,
-            roof_type="mai_bang",
+            roof_type="mai_ton",
         )
-        sloped = compute_house_floor_area(
+        heavy = compute_house_floor_area(
             foundation_area_m2=100,
             foundation_type="mong_bang",
             floor_areas_m2=[80],
             roof_area_m2=100,
-            roof_type="mai_ngoi",
+            roof_type="mai_thai",
         )
-        assert sloped > flat
-        assert sloped - flat == pytest.approx(100 * (ROOF_TYPE_FACTOR["mai_ngoi"] - 1.0))
+        assert heavy > light
+        assert heavy - light == pytest.approx(
+            100 * (ROOF_TYPE_FACTOR["mai_thai"] - ROOF_TYPE_FACTOR["mai_ton"])
+        )
 
     def test_invalid_roof_type_is_rejected(self):
         with pytest.raises(ValueError, match="roof_type"):

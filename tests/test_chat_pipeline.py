@@ -85,7 +85,7 @@ class FakePriceRepo:
         return self.rows_by_region.get(region, [])
 
 
-def price_row(name, region, price, doc_id=None):
+def price_row(name, region, price, doc_id=None, page_num=None):
     return SimpleNamespace(
         id=uuid.uuid4(),
         document_id=doc_id or uuid.uuid4(),
@@ -101,6 +101,7 @@ def price_row(name, region, price, doc_id=None):
         price_period="2026-06",
         notes=None,
         raw_row_text=f"{name} {region} {price}",
+        page_num=page_num,
     )
 
 
@@ -355,6 +356,19 @@ class TestExactPriceGoesToTheToolFirst:
         assert src["source_kind"] == "tool"
         assert src["authority"] == "authoritative"
         assert src["region"] == "HCM"
+
+    async def test_tool_source_carries_the_rows_page_num(self, client_factory):
+        """The citation chip used to show only a filename — no way to find
+        the row in a long phụ lục. page_num must flow from the DB row all
+        the way to the SSE payload, same path as filename/region."""
+        app, *_ = client_factory(
+            price_rows={
+                "HCM": [price_row("Xi măng PCB40 Hà Tiên", "HCM", 1_450_000, page_num=17)]
+            }
+        )
+        events = await run_stream(app, {**BASE, "message": "Giá xi măng PCB40 ở TPHCM?"})
+        src = done_event(events)["sources"][0]
+        assert src["page_num"] == 17
 
     async def test_the_presenter_is_given_the_exact_number(self, client_factory):
         app, llm, *_ = client_factory(

@@ -28,6 +28,10 @@ class MaterialPriceRow:
     price_period: str | None = None
     manufacturer: str | None = None
     notes: str | None = None
+    # Which page of the source PDF this row was read from — None for
+    # DOCX/Markdown (no page concept there) — see price_extractor.py's
+    # extract_price_rows for where this is parsed from the table label.
+    page_num: int | None = None
 
 
 # Words too short or too common to narrow anything down. "loại"/"loai" and
@@ -188,6 +192,7 @@ class MaterialPriceRepository:
                     manufacturer=_trunc(r.manufacturer, 255),
                     notes=r.notes,
                     raw_row_text=r.raw_row_text,
+                    page_num=r.page_num,
                 )
                 for r in rows
             )

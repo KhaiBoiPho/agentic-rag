@@ -251,6 +251,7 @@ async def price_sources(records: list[MaterialRecord]) -> list[AnswerSource]:
             document_id=rec.document_id,
             filename=filenames.get(rec.document_id),
             price_period=rec.price_period,
+            page_num=rec.page_num,
             content=rec.raw_row_text,
             used_for="price",
         )

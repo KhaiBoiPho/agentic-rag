@@ -19,7 +19,9 @@ from app.core.pricing.service import (
 class _Row:
     """Minimal stand-in for a `material_prices` ORM row."""
 
-    def __init__(self, name, region, price, *, unit="tấn", spec=None, notes=None, raw=None):
+    def __init__(
+        self, name, region, price, *, unit="tấn", spec=None, notes=None, raw=None, page_num=None
+    ):
         self.id = uuid.uuid4()
         self.document_id = uuid.uuid4()
         self.material_name = name
@@ -34,6 +36,7 @@ class _Row:
         self.price_period = "2026-06"
         self.notes = notes
         self.raw_row_text = raw or f"{name} | {region} | {price}"
+        self.page_num = page_num
 
 
 class FakeRepo:
@@ -333,6 +336,7 @@ class TestRecordShape:
             "HCM",
             1_450_000,
             spec="bao 50kg, TCVN 6260:2020",
+            page_num=42,
         )
         repo = FakeRepo({"HCM": [row]})
         rec = (
@@ -347,6 +351,19 @@ class TestRecordShape:
         assert rec.document_id and rec.row_id and rec.raw_row_text
         # extracted from the row's own text, not inferred
         assert rec.technical_standard == "TCVN 6260:2020"
+        assert rec.page_num == 42
+
+    async def test_page_num_is_none_when_the_row_predates_it(self):
+        """A row ingested before migration 0011 (or a repo stub that never
+        heard of the column) must not crash the lookup — just show no page,
+        same as it did before this feature existed."""
+        row = _Row("Cát xây tô", "HCM", 250_000)
+        del row.page_num  # simulate an even older/lighter row shape
+        repo = FakeRepo({"HCM": [row]})
+        rec = (
+            await lookup_material_record(region="HCM", material_name="cát", repo=repo)
+        ).records[0]
+        assert rec.page_num is None
 
     async def test_technical_standard_is_none_when_the_row_has_none(self):
         repo = FakeRepo({"HCM": [_Row("Cát xây tô", "HCM", 250_000)]})
