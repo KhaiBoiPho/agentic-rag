@@ -303,11 +303,11 @@ table.est tr.total .num{font-size:var(--fs-md);font-weight:750;color:var(--brand
 /* Tiny hover-only affordance, anchored to the bottom edge of the mic orb —
    `title` is the transcript itself, so hovering is the whole feature; no
    click behavior, just a native tooltip. */
-.voice-transcript-btn{position:absolute;bottom:-5px;left:50%;transform:translateX(-50%);
-  width:13px;height:13px;border-radius:50%;display:grid;place-items:center;padding:0;
-  background:var(--surface);border:1px solid var(--line-strong);color:var(--muted);
+.voice-transcript-btn{position:absolute;bottom:-9px;left:50%;transform:translateX(-50%);
+  width:20px;height:20px;border-radius:50%;display:grid;place-items:center;padding:0;
+  background:var(--surface);border:1.5px solid var(--line-strong);color:var(--muted);
   cursor:help;z-index:2;}
-.voice-transcript-btn svg{width:7px;height:7px;}
+.voice-transcript-btn svg{width:11px;height:11px;}
 .voice-transcript-btn:hover{color:var(--brand-ink);border-color:var(--brand-line);background:var(--brand-soft);}
 @keyframes orbring{0%{transform:scale(.85);opacity:.5;}100%{transform:scale(1.75);opacity:0;}}
 @media (prefers-reduced-motion:reduce){.voice-orb-ring,.voice-orb-ring::after{animation:none;}}
