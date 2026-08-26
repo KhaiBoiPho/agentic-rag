@@ -111,8 +111,19 @@ _STRUCTURED_FIELD_WORDS: dict[str, list[str]] = {
         "của công ty nào",
         "của hãng nào",
     ],
-    "spec": ["quy cách", "thông số", "kích thước", "chủng loại"],
-    "technical_standard": ["tiêu chuẩn kỹ thuật của", "đạt tiêu chuẩn nào", "theo tcvn nào"],
+    # "size_spec" = "Quy cách" (dimension/size, e.g. "≥1.00-1.40mm") —
+    # deliberately NOT named "spec": that name used to live here but the
+    # underlying material_prices column it pointed at (`spec`) actually
+    # holds "Tiêu chuẩn kỹ thuật" (technical_standard, below), not quy cách
+    # — two different columns in the source tables, answering different
+    # questions. See MaterialRecord.size_spec / migration 0012.
+    "size_spec": ["quy cách", "thông số", "kích thước", "chủng loại"],
+    "technical_standard": [
+        "tiêu chuẩn kỹ thuật của",
+        "tiêu chuẩn kỹ thuật",
+        "đạt tiêu chuẩn nào",
+        "theo tcvn nào",
+    ],
     "price_basis": [
         "tại mỏ",
         "tại chân công trình",

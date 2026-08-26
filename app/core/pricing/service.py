@@ -64,6 +64,12 @@ class MaterialRecord:
     document_id: str
     raw_row_text: str
     spec: str | None = None
+    # "Quy cách" — dimension/size (e.g. "≥1.00-1.40mm"), separate from `spec`
+    # (which despite its name holds "Tiêu chuẩn kỹ thuật" — a technical
+    # standard, not a size; see material_price_repo.py's MaterialPriceRow
+    # docstring). Populated for rows ingested after migration 0012; NULL for
+    # anything older, never guessed.
+    size_spec: str | None = None
     manufacturer: str | None = None
     price_period: str | None = None
     notes: str | None = None
@@ -79,7 +85,12 @@ class MaterialRecord:
 
     @property
     def display_name(self) -> str:
-        return self.material_name + (f" ({self.spec})" if self.spec else "")
+        # size_spec matters most here: rows sharing the exact same
+        # material_name and differing only by size ("Ống thép mạ kẽm size
+        # lớn" at 0.60-1.00mm vs 1.00-1.40mm vs >1.40-2.00mm) are otherwise
+        # indistinguishable in an AMBIGUOUS candidate list.
+        bits = [b for b in (self.size_spec, self.spec) if b]
+        return self.material_name + (f" ({', '.join(bits)})" if bits else "")
 
 
 @dataclass
@@ -135,6 +146,9 @@ def _to_record(row) -> MaterialRecord:
         document_id=str(row.document_id),
         raw_row_text=row.raw_row_text or "",
         spec=row.spec,
+        # getattr — same reasoning as page_num below (older row shape/test
+        # stub may predate this column).
+        size_spec=getattr(row, "size_spec", None),
         manufacturer=row.manufacturer,
         price_period=row.price_period,
         notes=row.notes,

@@ -135,9 +135,9 @@ def _display_name(row) -> str:
     # getattr, not row.spec/row.manufacturer directly — test stubs (and any
     # future lightweight row shape) don't always carry every optional column,
     # and neither is essential to identify which product this is.
-    spec = getattr(row, "spec", None)
-    if spec:
-        name += f" ({spec})"
+    bits = [b for b in (getattr(row, "size_spec", None), getattr(row, "spec", None)) if b]
+    if bits:
+        name += f" ({', '.join(bits)})"
     manufacturer = getattr(row, "manufacturer", None)
     if manufacturer:
         name += f" — {manufacturer}"

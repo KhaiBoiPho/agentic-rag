@@ -197,7 +197,14 @@ class MaterialPrice(Base):
     region: Mapped[str] = mapped_column(String(8), index=True)  # HN | DN | HCM | KH
     material_category: Mapped[str] = mapped_column(String(128), index=True)
     material_name: Mapped[str] = mapped_column(String(512), index=True)
-    spec: Mapped[str | None] = mapped_column(String(512), nullable=True)  # quy cách
+    # "Tiêu chuẩn kỹ thuật" (technical standard, e.g. "JIS, AS/NZS, ASTM") —
+    # NOT "quy cách" despite this column's old comment; see size_spec below,
+    # migration 0012's docstring, and price_extractor.py's _SPEC_KEYWORDS.
+    spec: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # "Quy cách" — dimension/size (e.g. "≥1.00-1.40mm"). A separate column
+    # from `spec` because the source tables often have both, answering
+    # different questions.
+    size_spec: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     unit: Mapped[str] = mapped_column(String(32))
     price_ex_vat: Mapped[float] = mapped_column(Numeric(18, 2))

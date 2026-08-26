@@ -20,7 +20,8 @@ class _Row:
     """Minimal stand-in for a `material_prices` ORM row."""
 
     def __init__(
-        self, name, region, price, *, unit="tấn", spec=None, notes=None, raw=None, page_num=None
+        self, name, region, price, *, unit="tấn", spec=None, size_spec=None, notes=None,
+        raw=None, page_num=None,
     ):
         self.id = uuid.uuid4()
         self.document_id = uuid.uuid4()
@@ -30,6 +31,7 @@ class _Row:
         self.price_ex_vat = price
         self.unit = unit
         self.spec = spec
+        self.size_spec = size_spec
         self.manufacturer = "Vicem"
         self.price_basis = "tai_chan_cong_trinh"
         self.source_type = "official_annex"
@@ -364,6 +366,45 @@ class TestRecordShape:
             await lookup_material_record(region="HCM", material_name="cát", repo=repo)
         ).records[0]
         assert rec.page_num is None
+
+
+class TestSizeSpecDistinctFromSpec:
+    """size_spec ("Quy cách") is a separate column from spec ("Tiêu chuẩn kỹ
+    thuật") — see migration 0012. display_name must show BOTH when present,
+    and size_spec first: it's what actually distinguishes otherwise-identical
+    rows (same material_name, different thickness/size)."""
+
+    async def test_display_name_shows_size_spec_before_spec(self):
+        row = _Row(
+            "Ống thép mạ kẽm size lớn", "HN", 21_600,
+            spec="JIS, AS/NZS, ASTM", size_spec="≥1.00-1.40mm",
+        )
+        repo = FakeRepo({"HN": [row]})
+        rec = (
+            await lookup_material_record(region="HN", material_name="ống thép", repo=repo)
+        ).records[0]
+        assert rec.size_spec == "≥1.00-1.40mm"
+        assert rec.spec == "JIS, AS/NZS, ASTM"
+        assert rec.display_name == (
+            "Ống thép mạ kẽm size lớn (≥1.00-1.40mm, JIS, AS/NZS, ASTM)"
+        )
+
+    async def test_display_name_with_only_size_spec(self):
+        row = _Row("Ống thép mạ kẽm", "HN", 21_600, size_spec="≥1.00-1.40mm")
+        repo = FakeRepo({"HN": [row]})
+        rec = (
+            await lookup_material_record(region="HN", material_name="ống thép", repo=repo)
+        ).records[0]
+        assert rec.display_name == "Ống thép mạ kẽm (≥1.00-1.40mm)"
+
+    async def test_size_spec_is_none_when_the_row_predates_it(self):
+        row = _Row("Cát xây tô", "HCM", 250_000)
+        del row.size_spec
+        repo = FakeRepo({"HCM": [row]})
+        rec = (
+            await lookup_material_record(region="HCM", material_name="cát", repo=repo)
+        ).records[0]
+        assert rec.size_spec is None
 
     async def test_technical_standard_is_none_when_the_row_has_none(self):
         repo = FakeRepo({"HCM": [_Row("Cát xây tô", "HCM", 250_000)]})

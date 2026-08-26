@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.core.chunking.table_extract import is_unit_ditto
 from app.core.ingestion.price_tables import iter_price_tables
@@ -78,6 +78,15 @@ _CATEGORY_KEYWORDS = ["nhóm vật liệu", "nhom vat lieu"]
 # merged cells were filled (table_extract). They answer questions the price
 # columns cannot ("tiêu chuẩn RoHS/IEC 62262 áp dụng cho vật liệu nào").
 _SPEC_KEYWORDS = ["tiêu chuẩn kỹ thuật", "tieu chuan ky thuat", "tiêu chuẩn", "tieu chuan"]
+# "Quy cách" — dimension/size (a table can have BOTH this AND a separate
+# "Tiêu chuẩn kỹ thuật" column; they answer different questions ("quy cách
+# thế nào" wants a size like "≥1.00-1.40mm", not "JIS, ASTM"). Deliberately a
+# SEPARATE keyword list from _SPEC_KEYWORDS/_NAME_FALLBACK_KEYWORDS — this one
+# only ever assigns `size_spec_col` in _detect_header's main loop, never the
+# name-column fallback (_NAME_FALLBACK_KEYWORDS handles the "no dedicated name
+# column, product name lives in Quy cách instead" case separately, and must
+# keep taking priority there — see its own docstring).
+_SIZE_SPEC_KEYWORDS = ["quy cách", "quy cach", "kích thước", "kich thuoc"]
 _MANUFACTURER_KEYWORDS = [
     "nhà sản xuất",
     "nha san xuat",
@@ -203,6 +212,21 @@ class _ColumnMapping:
     price_generic_col: int | None
     spec_col: int | None = None
     manufacturer_col: int | None = None
+    size_spec_col: int | None = None
+    # col_idx -> the literal header-cell text found at that column. Used to
+    # neutralize the "blank column reads as its own header label" bug (see
+    # _cell() in _parse_data_rows): a table-wide blank column under "Tiêu
+    # chuẩn kỹ thuật"/"Quy cách"/etc. can resolve (via table_extract.py's
+    # merge-fill, which has no way to know a row is a header) to the header
+    # text itself repeated down every row — measured on the live corpus as
+    # 2.182 rows' spec and 76 rows' manufacturer being literal column labels
+    # ("Tiêu chuẩn kỹ thuật", "Vận chuyển") rather than real data. Comparing
+    # the resolved value against the header's OWN text (known here, at the
+    # layer that actually knows which row is the header) catches this
+    # without touching table_extract.py's shared merge-fill geometry, which
+    # cannot make this distinction — its row 0 is just as often a genuine
+    # first DATA row (continuation pages have no header at all) as a header.
+    header_labels: dict[int, str] = field(default_factory=dict)
 
 
 _LEGEND_CELL_RE = re.compile(r"^[\[\(]?\d{1,2}[\]\)]?$")
@@ -233,7 +257,7 @@ def _detect_header(table: list[list[str | None]]) -> tuple[int, _ColumnMapping] 
     name_col = unit_col = category_col = price_site_col = price_source_col = price_generic_col = (
         None
     )
-    spec_col = manufacturer_col = None
+    spec_col = manufacturer_col = size_spec_col = None
     for i, raw_row in enumerate(table[:6]):
         cells = [c or "" for c in raw_row]
         # Decorative title/subtitle rows are typically one long cell spanning
@@ -250,6 +274,7 @@ def _detect_header(table: list[list[str | None]]) -> tuple[int, _ColumnMapping] 
         po = _find_col(cells, _PRICE_AT_SOURCE_KEYWORDS)
         pg = _find_col(cells, _PRICE_GENERIC_KEYWORDS) if ps is None and po is None else None
         sp = _find_col(cells, _SPEC_KEYWORDS)
+        ssp = _find_col(cells, _SIZE_SPEC_KEYWORDS)
         mf = _find_col(cells, _MANUFACTURER_KEYWORDS)
         hit = any(v is not None for v in (n, u, c, ps, po, pg))
 
@@ -266,6 +291,7 @@ def _detect_header(table: list[list[str | None]]) -> tuple[int, _ColumnMapping] 
         price_source_col = price_source_col if price_source_col is not None else po
         price_generic_col = price_generic_col if price_generic_col is not None else pg
         spec_col = spec_col if spec_col is not None else sp
+        size_spec_col = size_spec_col if size_spec_col is not None else ssp
         manufacturer_col = manufacturer_col if manufacturer_col is not None else mf
 
     # Only reached when nothing in the header row(s) matched _NAME_KEYWORDS —
@@ -285,6 +311,22 @@ def _detect_header(table: list[list[str | None]]) -> tuple[int, _ColumnMapping] 
     if price_site_col is None and price_source_col is None and price_generic_col is None:
         return None
 
+    # Literal header-cell text per free-text-ish column — see
+    # _ColumnMapping.header_labels for why this is captured (the "blank
+    # column resolves to its own header label" bug). Scanned over the same
+    # header rows already identified above, taking the first non-empty cell
+    # at that column index (a 2+ row header can print the label on either
+    # physical row).
+    header_labels: dict[int, str] = {}
+    for col in (category_col, spec_col, size_spec_col, manufacturer_col):
+        if col is None:
+            continue
+        for raw_row in table[: header_idx + 1]:
+            cells = [c or "" for c in raw_row]
+            if col < len(cells) and cells[col].strip():
+                header_labels[col] = cells[col].strip()
+                break
+
     # Skip the decorative "column index" row(s) (e.g. '1','2','3'... or
     # '[1]','[2]'...) that follow the real header labels. Scanning forward
     # rather than checking only the next row matters for multi-level headers:
@@ -303,6 +345,8 @@ def _detect_header(table: list[list[str | None]]) -> tuple[int, _ColumnMapping] 
         price_generic_col,
         spec_col,
         manufacturer_col,
+        size_spec_col,
+        header_labels,
     )
     return header_idx, mapping
 
@@ -520,6 +564,7 @@ def _parse_data_rows(
         mapping.price_generic_col,
     )
     spec_col, manufacturer_col = mapping.spec_col, mapping.manufacturer_col
+    size_spec_col, header_labels = mapping.size_spec_col, mapping.header_labels
 
     if assume_column_merges:
         data_rows = _fill_table_wide_unit([[c or "" for c in r] for r in data_rows], unit_col)
@@ -589,6 +634,12 @@ def _parse_data_rows(
             if category_col is not None and category_col < len(cells)
             else ""
         )
+        # A category column that is blank for every data row can resolve to
+        # its own header label ("Nhóm vật liệu") repeating down — see
+        # _ColumnMapping.header_labels. Caught here (not inside `_cell()`,
+        # which cat_cell bypasses) for the same reason.
+        if category_col is not None and header_labels.get(category_col) == cat_cell:
+            cat_cell = ""
 
         # Sparse "group header" row: a material-group heading rendered as one
         # label with the rest of the row empty (e.g. "I | XI MĂNG | | | ...").
@@ -612,7 +663,7 @@ def _parse_data_rows(
         raw_sparse_count = sum(
             1
             for idx, c in enumerate(raw_cells)
-            if c.strip() and idx not in (spec_col, manufacturer_col)
+            if c.strip() and idx not in (spec_col, manufacturer_col, size_spec_col)
         )
         raw_unit = raw_cells[unit_col].strip() if unit_col < len(raw_cells) else ""
         raw_name = raw_cells[name_col].strip() if name_col < len(raw_cells) else ""
@@ -677,7 +728,15 @@ def _parse_data_rows(
         def _cell(col: int | None) -> str | None:
             if col is None or col >= len(cells):
                 return None
-            return _norm_ws(cells[col]) or None
+            val = _norm_ws(cells[col]) or None
+            # A blank column can resolve to its own header label repeating
+            # down every row (table_extract.py's merge-fill has no way to
+            # tell "header" from "genuine first data row" — see
+            # _ColumnMapping.header_labels). A value that is exactly that
+            # column's own header text is the leak, not real data.
+            if val and header_labels.get(col) and _norm_ws(header_labels[col]) == val:
+                return None
+            return val
 
         mfr_cell = _cell(manufacturer_col)
         if mfr_cell and _looks_like_org(mfr_cell):
@@ -706,6 +765,7 @@ def _parse_data_rows(
                     source_type="",
                     raw_row_text=" | ".join(non_empty),
                     spec=_cell(spec_col),
+                    size_spec=_cell(size_spec_col),
                     manufacturer=manufacturer,
                     page_num=page_num,
                 )

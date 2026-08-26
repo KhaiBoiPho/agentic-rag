@@ -101,6 +101,8 @@ def _record_line(rec: MaterialRecord) -> str:
         bits.append(f"kỳ công bố {rec.price_period}")
     if rec.manufacturer:
         bits.append(f"nhà sản xuất {rec.manufacturer}")
+    if rec.size_spec:
+        bits.append(f"quy cách {rec.size_spec}")
     if rec.technical_standard:
         bits.append(f"tiêu chuẩn {rec.technical_standard}")
     if rec.source_type:

@@ -25,6 +25,13 @@ class MaterialPriceRow:
     source_type: str
     raw_row_text: str
     spec: str | None = None
+    # "Quy cách" — dimension/size (e.g. "≥1.00-1.40mm"). Deliberately a
+    # SEPARATE field from `spec`: this system's tables often carry two
+    # distinct columns, "Tiêu chuẩn kỹ thuật" (technical standard — what
+    # `spec` actually holds, see price_extractor.py's _SPEC_KEYWORDS) and
+    # "Quy cách" (size). A question asking "quy cách thế nào" wants THIS,
+    # not the standard.
+    size_spec: str | None = None
     price_period: str | None = None
     manufacturer: str | None = None
     notes: str | None = None
@@ -184,6 +191,7 @@ class MaterialPriceRepository:
                     material_category=_trunc(r.material_category, 128),
                     material_name=_trunc(r.material_name, 512),
                     spec=_trunc(r.spec, 512),
+                    size_spec=_trunc(r.size_spec, 512),
                     unit=_trunc(r.unit, 32),
                     price_ex_vat=r.price_ex_vat,
                     price_basis=_trunc(r.price_basis, 32),

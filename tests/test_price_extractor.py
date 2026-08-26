@@ -150,3 +150,63 @@ class TestPageNumTagging:
         )
         assert len(result.rows) == 1
         assert result.rows[0].page_num is None
+
+
+class TestSizeSpecColumn:
+    """"Quy cách" (dimension/size) used to have no dedicated column at all —
+    only "Tiêu chuẩn kỹ thuật" (technical standard) was captured, into a
+    field confusingly named `spec`. A table with BOTH columns must keep them
+    separate: "quy cách thế nào" wants the size, not the standard."""
+
+    def test_spec_and_size_spec_are_captured_into_separate_fields(self):
+        table = [
+            _row(
+                "STT", "Tên vật liệu", "Đơn vị tính", "Tiêu chuẩn kỹ thuật",
+                "Quy cách", "Đơn giá",
+            ),
+            _row("1", "Ống thép mạ kẽm", "kg", "JIS, AS/NZS, ASTM", "≥1.00-1.40mm", "21.600"),
+        ]
+        result = parse_price_table(table)
+        assert len(result.rows) == 1
+        row = result.rows[0]
+        assert row.spec == "JIS, AS/NZS, ASTM"
+        assert row.size_spec == "≥1.00-1.40mm"
+
+    def test_size_spec_alone_without_a_standard_column(self):
+        table = [
+            _row("STT", "Tên vật liệu", "Đơn vị tính", "Quy cách", "Đơn giá"),
+            _row("1", "Ống thép mạ kẽm", "kg", "≥1.00-1.40mm", "21.600"),
+        ]
+        result = parse_price_table(table)
+        assert result.rows[0].size_spec == "≥1.00-1.40mm"
+        assert result.rows[0].spec is None
+
+
+class TestHeaderLabelLeakGuard:
+    """The bug this fixes: a column blank for every data row can resolve
+    (via table_extract.py's merge-fill, which cannot distinguish a header
+    row from a genuine first data row on a headerless continuation page) to
+    its own header text repeating down every row — measured on the live
+    corpus as 2.182 rows' `spec` and 76 rows' `manufacturer` being literal
+    column labels ("Tiêu chuẩn kỹ thuật", "Vận chuyển") instead of data."""
+
+    def test_a_blank_standard_column_does_not_leak_its_own_header_label(self):
+        table = [
+            _row("STT", "Tên vật liệu", "Đơn vị tính", "Tiêu chuẩn kỹ thuật", "Đơn giá"),
+            _row("1", "Ống uPVC C2 D34", "m", "Tiêu chuẩn kỹ thuật", "22.800"),
+            _row("2", "Ống uPVC C3 D34", "m", "Tiêu chuẩn kỹ thuật", "25.900"),
+        ]
+        result = parse_price_table(table)
+        assert len(result.rows) == 2
+        assert all(r.spec is None for r in result.rows)
+
+    def test_a_real_standard_value_that_differs_from_the_header_still_saved(self):
+        """The guard must not suppress GENUINE data merely for coexisting in
+        a table where the bug also happens elsewhere — only a value that is
+        byte-identical to its own column's header label is suppressed."""
+        table = [
+            _row("STT", "Tên vật liệu", "Đơn vị tính", "Tiêu chuẩn kỹ thuật", "Đơn giá"),
+            _row("1", "Đèn LED", "cái", "CE, ENEC, RoHS", "120.000"),
+        ]
+        result = parse_price_table(table)
+        assert result.rows[0].spec == "CE, ENEC, RoHS"
