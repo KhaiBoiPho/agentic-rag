@@ -120,26 +120,40 @@ class TestEstimateRouting:
 
 class TestClassifierIsSubordinate:
     class _RefusingLLM:
-        """Would route everything to DOCUMENT_RAG if it were ever consulted."""
+        """Route classifier would send everything to DOCUMENT_RAG if it were
+        ever consulted; the slot extractor (llm_extractor.py — always
+        consulted for a price-shaped decision now, see _apply_llm_slots) gets
+        a harmless non-JSON reply, which fails open to no slots at all.
+        Tracks the two kinds of call separately by system-prompt content, so
+        a test can assert "the ROUTE classifier was never asked" without that
+        being confused by the (now unconditional) slot-refinement call."""
 
         def __init__(self):
-            self.calls = 0
+            self.route_calls = 0
+            self.other_calls = 0
 
         async def chat(self, **kwargs):
-            self.calls += 1
-            return "DOCUMENT_RAG"
+            system = (kwargs.get("messages") or [{}])[0].get("content", "")
+            if "EXACT_STRUCTURED" in system and "DOCUMENT_RAG" in system:
+                self.route_calls += 1
+                return "DOCUMENT_RAG"
+            self.other_calls += 1
+            return "not json — fails open in extract_slots_llm"
 
     async def test_classifier_never_sees_a_clear_price_question(self):
+        """The ROUTE classifier specifically must never be consulted for a
+        rule-clear price question — the slot extractor still runs (see
+        TestLLMSlotRefinement below), that's a separate, always-on pass."""
         llm = self._RefusingLLM()
         d = await route_request("Giá xi măng PCB40 ở Hồ Chí Minh?", llm=llm)
         assert d.route is RequestRoute.EXACT_STRUCTURED
-        assert llm.calls == 0
+        assert llm.route_calls == 0
         assert d.decided_by == "rule"
 
     async def test_classifier_handles_what_rules_abstain_on(self):
         llm = self._RefusingLLM()
         d = await route_request("Mình đang phân vân giữa hai phương án móng", llm=llm)
-        assert llm.calls == 1
+        assert llm.route_calls == 1
         assert d.decided_by == "classifier"
 
     async def test_no_llm_falls_back_to_general_chat(self):
@@ -153,6 +167,61 @@ class TestClassifierIsSubordinate:
 
         d = await route_request("Mình đang phân vân giữa hai phương án móng", llm=Broken())
         assert d.route is RequestRoute.GENERAL_CHAT
+
+
+class TestLLMSlotRefinement:
+    """Regex phrase-stripping is a fixed word list fighting real phrasing
+    variety it can never fully enumerate — measured live: "tìm giá xi măng ở
+    sài gòn" extracted material_name "tìm xi măng" ("tìm" was never added to
+    the strip list), and a condensed follow-up left "TP" stuck onto the next
+    material entirely. The LLM slot pass (_apply_llm_slots) now always runs
+    for a price-shaped decision and replaces the regex-derived slots — not
+    just when regex found nothing, since regex finding something WRONG is
+    exactly the failure mode above."""
+
+    class _SlotLLM:
+        def __init__(self, reply: str):
+            self.reply = reply
+            self.calls = 0
+
+        async def chat(self, **kwargs):
+            self.calls += 1
+            return self.reply
+
+    async def test_fixes_a_garbled_material_name_the_regex_list_missed(self):
+        """"tìm" is not on the phrase-strip list — the measured live bug."""
+        llm = self._SlotLLM('{"material_name": "xi măng", "code_variants": []}')
+        d = await route_request("tìm giá xi măng ở sài gòn", llm=llm)
+        assert d.route is RequestRoute.EXACT_STRUCTURED
+        assert d.material_name == "xi măng"
+        assert d.decided_by == "llm_slots"
+        assert d.regions == ["HCM"]
+
+    async def test_can_turn_clarify_into_exact_structured(self):
+        """A message the regex list finds NO subject in at all — LLM slots
+        can resolve what rule-only CLARIFY couldn't."""
+        llm = self._SlotLLM('{"material_name": "thép D12", "code_variants": []}')
+        d = await route_request("giá bao nhiêu vậy ở hà nội", llm=llm)
+        assert d.route is RequestRoute.EXACT_STRUCTURED
+        assert d.material_name == "thép D12"
+
+    async def test_llm_failure_falls_back_to_the_regex_slots_not_broken(self):
+        class Broken:
+            async def chat(self, **kwargs):
+                raise RuntimeError("openrouter down")
+
+        d = await route_request("Giá xi măng PCB40 ở Hồ Chí Minh?", llm=Broken())
+        assert d.route is RequestRoute.EXACT_STRUCTURED
+        assert d.material_name  # still the regex-derived slot, not empty
+        assert d.decided_by == "rule"
+
+    async def test_non_price_decisions_are_left_alone(self):
+        """The slot pass only touches price-shaped decisions — a document
+        question must not trigger a wasted extraction call."""
+        llm = self._SlotLLM('{"material_name": "should never be used"}')
+        d = await route_request("PCB40 khác PCB30 thế nào?", llm=llm)
+        assert d.route is RequestRoute.DOCUMENT_RAG
+        assert llm.calls == 0
 
 
 class TestRegionSlots:

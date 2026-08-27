@@ -513,9 +513,18 @@ def extract_material_query(message: str, regions: list[str] | None = None) -> st
 
 
 def _build_price_decision(
-    raw: str, regions: list[str], wants_document: bool, fields: list[str]
+    raw: str,
+    regions: list[str],
+    wants_document: bool,
+    fields: list[str],
+    *,
+    material: str | None = None,
+    manufacturer: str | None = None,
+    category_hint: str | None = None,
+    use_extraction: bool = True,
 ) -> RouteDecision:
-    """Slot extraction shared by the rule layer AND the classifier fallback.
+    """Slot extraction shared by the rule layer, the classifier fallback, AND
+    the LLM slot-refinement pass (see `_apply_llm_slots`).
 
     Was previously inlined in `route_by_rules` only — `route_by_classifier`
     returned `material_name=None`/`manufacturer=None` even after correctly
@@ -526,43 +535,58 @@ def _build_price_decision(
     lookup downstream asked for material+region all over again — the
     conversation's context silently vanished. Both layers now build the same
     RouteDecision shape once a message is recognized as a price/attribute
-    question, regardless of which layer recognized it."""
+    question, regardless of which layer recognized it.
+
+    `material`/`manufacturer`/`category_hint` + `use_extraction=False` let a
+    caller supply already-extracted slots (from the LLM extractor) instead of
+    running the regex phrase-stripping below — that stripping is a fixed
+    word list fighting real phrasing variety it can never fully enumerate
+    ("tìm giá xi măng ở sài gòn" -> material_name "tìm xi măng", "tìm"
+    was simply never on the list; "TP" left stuck to the next follow-up's
+    material after a condensed rewrite). The regex path stays as the
+    fail-open default when no LLM is available or its call fails — see
+    `_apply_llm_slots`.
+    """
     # A relative-past reference ("năm ngoái") the corpus has no history to
     # answer — carried through as price_period so the caller can refuse with
     # the mismatch named instead of silently using the only period on file.
     past_period = mentions_relative_past_period(raw)
-    manufacturer = extract_manufacturer_query(raw)
-    # Pulled out BEFORE material_name is computed, not after — left in,
-    # "mỏ"/"công ty"/etc. and the org name that follows would also count
-    # as material_name words, and the repository's all-words-must-match
-    # rule then demands them in the PRODUCT name column too, which they
-    # are never in. Stripped whenever the LEAD regex matched at all — even a
-    # BARE mention ("của công ty" naming no one, manufacturer=None) is still
-    # not part of the product's name, so "giá bt 01 của công ty" no longer
-    # searches for a product literally named "bt 01 công ty".
-    material_source = _MANUFACTURER_LEAD_RE.sub(" ", raw, count=1)
 
-    # "nội thất"/"ngoại thất" identify which of two SAME-NAMED rows the user
-    # means (see _CATEGORY_HINTS) — pulled into material_category, not left
-    # in material_name where it can never match (the distinction lives in a
-    # different column, and the two products' own name is identical).
-    #
-    # Every occurrence found gets stripped from material_name regardless of
-    # whether extract_category_hint decided to filter by it — a comparison
-    # question naming BOTH ("bột bả nội thất và bột bả ngoại thất, cái nào
-    # đắt hơn?") has category_hint=None (don't filter, the question wants
-    # both rows) but "ngoại thất" is still noise inside material_name; left
-    # in, it demanded "ngoại" as a literal word in a product name column that
-    # never has it, and the resulting all-words-must-match failure varied
-    # with how much conversation history had piled up by the time the
-    # follow-up condenser ran — same question, sometimes a wrong route.
-    category_hint = extract_category_hint(raw)
-    for hint in matched_category_hints(raw):
-        material_source = re.sub(
-            rf"(?<![\w]){re.escape(hint)}(?![\w])", " ", material_source, flags=re.IGNORECASE
-        )
+    if use_extraction:
+        manufacturer = extract_manufacturer_query(raw)
+        # Pulled out BEFORE material_name is computed, not after — left in,
+        # "mỏ"/"công ty"/etc. and the org name that follows would also count
+        # as material_name words, and the repository's all-words-must-match
+        # rule then demands them in the PRODUCT name column too, which they
+        # are never in. Stripped whenever the LEAD regex matched at all — even
+        # a BARE mention ("của công ty" naming no one, manufacturer=None) is
+        # still not part of the product's name, so "giá bt 01 của công ty" no
+        # longer searches for a product literally named "bt 01 công ty".
+        material_source = _MANUFACTURER_LEAD_RE.sub(" ", raw, count=1)
 
-    material = extract_material_query(material_source, regions)
+        # "nội thất"/"ngoại thất" identify which of two SAME-NAMED rows the
+        # user means (see _CATEGORY_HINTS) — pulled into material_category,
+        # not left in material_name where it can never match (the distinction
+        # lives in a different column, and the two products' own name is
+        # identical).
+        #
+        # Every occurrence found gets stripped from material_name regardless
+        # of whether extract_category_hint decided to filter by it — a
+        # comparison question naming BOTH ("bột bả nội thất và bột bả ngoại
+        # thất, cái nào đắt hơn?") has category_hint=None (don't filter, the
+        # question wants both rows) but "ngoại thất" is still noise inside
+        # material_name; left in, it demanded "ngoại" as a literal word in a
+        # product name column that never has it, and the resulting
+        # all-words-must-match failure varied with how much conversation
+        # history had piled up by the time the follow-up condenser ran — same
+        # question, sometimes a wrong route.
+        category_hint = extract_category_hint(raw)
+        for hint in matched_category_hints(raw):
+            material_source = re.sub(
+                rf"(?<![\w]){re.escape(hint)}(?![\w])", " ", material_source, flags=re.IGNORECASE
+            )
+
+        material = extract_material_query(material_source, regions)
 
     if not material:
         # "giá bao nhiêu?" with no subject — ask, don't guess (§6.1).
@@ -760,26 +784,79 @@ async def route_by_classifier(message: str, llm) -> RouteDecision | None:
     )
 
 
+async def _apply_llm_slots(decision: RouteDecision, raw: str, llm) -> RouteDecision:
+    """Always prefer LLM-extracted material_name/manufacturer/category for a
+    price-shaped decision, replacing whatever the regex phrase-stripping in
+    `_build_price_decision` came up with.
+
+    Why unconditional rather than "only when the regex path found nothing":
+    the regex list can produce a WRONG (non-empty) material_name just as
+    easily as an empty one — "tìm giá xi măng ở sài gòn" extracted material
+    "tìm xi măng" (the phrase "tìm" was never added to the strip list, one
+    of an open-ended set no fixed list ever finishes enumerating) and still
+    "found" something, so a fallback gated on "extraction came up empty"
+    would never have caught it. The LLM sees the same message a human does
+    and does not need every phrasing pre-registered.
+
+    Fails open by construction: `extract_slots_llm` returns None on any
+    error (see its own docstring) and this then returns `decision`
+    unchanged — the regex-derived slots are never worse than nothing, so an
+    unavailable LLM degrades to today's behaviour, not to a broken one.
+    """
+    if decision.intent != "price_lookup" or decision.route not in (
+        RequestRoute.EXACT_STRUCTURED,
+        RequestRoute.MIXED,
+        RequestRoute.CLARIFY,
+    ):
+        return decision
+
+    from app.core.chat.llm_extractor import extract_slots_llm
+
+    slots = await extract_slots_llm(raw, llm)
+    if slots is None or not (slots.material_name or slots.manufacturer):
+        return decision
+
+    text = f" {raw.lower()} "
+    wants_document = _has(text, _DOCUMENT_WORDS) or bool(_COMPARISON_RE.search(text))
+    refined = _build_price_decision(
+        raw,
+        decision.regions,
+        wants_document,
+        decision.requested_fields,
+        material=slots.material_name,
+        manufacturer=slots.manufacturer,
+        category_hint=slots.material_category,
+        use_extraction=False,
+    )
+    refined.decided_by = "llm_slots"
+    return refined
+
+
 async def route_request(message: str, llm=None) -> RouteDecision:
-    """Rules first, classifier only when they abstain, GENERAL_CHAT last.
+    """Rules first, classifier only when they abstain, GENERAL_CHAT last —
+    then, for any price-shaped result, an LLM slot-refinement pass always
+    runs (see `_apply_llm_slots`) rather than trusting the regex extraction.
 
     The classifier is never allowed to overrule a rule — in particular it can
     never turn a rule-detected price question into a RAG-only answer, which is
-    the failure mode §4 calls out by name.
+    the failure mode §4 calls out by name. The LLM slot pass only ever
+    replaces WHICH product/manufacturer a price decision already chosen by
+    rule/classifier is about — it cannot change the route itself away from
+    what those two decided, only refine the slots the chosen route acts on.
     """
     decision = route_by_rules(message)
-    if decision is not None:
-        return decision
+    if decision is None and llm is not None:
+        decision = await route_by_classifier(message, llm)
+
+    if decision is None:
+        decision = RouteDecision(
+            route=RequestRoute.GENERAL_CHAT,
+            intent="general_chat",
+            regions=detect_regions(message),
+            confidence=0.5,
+            decided_by="fallback",
+        )
 
     if llm is not None:
-        classified = await route_by_classifier(message, llm)
-        if classified is not None:
-            return classified
-
-    return RouteDecision(
-        route=RequestRoute.GENERAL_CHAT,
-        intent="general_chat",
-        regions=detect_regions(message),
-        confidence=0.5,
-        decided_by="fallback",
-    )
+        decision = await _apply_llm_slots(decision, message, llm)
+    return decision
